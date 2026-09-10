@@ -55,7 +55,11 @@ try {
         $outDir = if ($t -eq 'portable') { 'dist/portable' } else { 'dist/installer' }
         Write-Host ''
         Write-Host "packaging $t -> $outDir"
-        & npx electron-builder --win $t --config electron-builder.config.cjs "--config.directories.output=$outDir"
+        # --publish never: electron-builder detects CI (the CI env var) and then
+        # tries to publish to GitHub Releases itself, which needs GH_TOKEN and
+        # collides with the release step in .github/workflows/release.yml.
+        # Building the artifacts is all this script should do.
+        & npx electron-builder --win $t --publish never --config electron-builder.config.cjs "--config.directories.output=$outDir"
         if ($LASTEXITCODE -ne 0) { $buildCode = $LASTEXITCODE; break }
       }
     }
