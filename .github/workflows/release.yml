@@ -2,6 +2,9 @@ name: Release
 
 # Builds and publishes the portable launcher and the NSIS installer.
 #
+# Triggered by a v* tag. Can also be run manually (workflow_dispatch), in which
+# case it only verifies that the build succeeds and does NOT publish anything.
+#
 # Signing is optional: the workflow signs automatically when the matching
 # repository secrets exist, and falls back to an unsigned build when they do
 # not. See docs/CODE_SIGNING.md.
@@ -19,6 +22,23 @@ jobs:
   release:
     runs-on: windows-latest
 
+    # Secrets are read into env here rather than inline, because the `secrets`
+    # context is NOT available inside `steps[*].if` -- referencing it there makes
+    # GitHub reject the whole workflow file ("workflow file issue", zero jobs).
+    # `env` is available in `if`, so the conditions below test env instead.
+    env:
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+      AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+      AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
+      AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
+      # Empty when the secret is absent, which electron-builder treats as
+      # "no signing material" and skips signing instead of failing.
+      CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+      CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+
     steps:
       - uses: actions/checkout@v4
 
@@ -31,31 +51,17 @@ jobs:
         run: npm ci
 
       # ---------------------------------------------------------------- signing
-      # Azure Trusted Signing (preferred: no certificate file to store or rotate).
-      # Only runs when all four secrets are configured.
+      # Azure Trusted Signing needs an Entra ID login. Only runs when the secret
+      # is configured; otherwise the build stays unsigned.
       - name: Sign in to Azure
-        if: ${{ secrets.AZURE_CLIENT_SECRET != '' }}
+        if: env.AZURE_CLIENT_SECRET != ''
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ env.AZURE_CLIENT_ID }}
+          tenant-id: ${{ env.AZURE_TENANT_ID }}
+          subscription-id: ${{ env.AZURE_SUBSCRIPTION_ID }}
 
       - name: Build and package
-        env:
-          # Azure Trusted Signing -- ignored when unset (electron-builder.config.cjs
-          # only adds azureSignOptions once all three values are present).
-          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
-          AZURE_TRUSTED_SIGNING_ACCOUNT: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT }}
-          AZURE_TRUSTED_SIGNING_PROFILE: ${{ secrets.AZURE_TRUSTED_SIGNING_PROFILE }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          # Certificate-file signing -- the alternative backend. Set
-          # WIN_CSC_LINK to the base64 of a .pfx and WIN_CSC_KEY_PASSWORD to its
-          # password; leave both empty to skip certificate signing.
-          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
-          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: npm run pack:all
 
       - name: Report signature status
@@ -66,19 +72,9 @@ jobs:
               "{0,-46} {1}" -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status
             }
 
-      - name: Publish release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            dist/portable/CalicoPet-portable-*.exe
-            dist/installer/CalicoPet-setup-*.exe
-            dist/installer/*.blockmap
-          generate_release_notes: true
-
-      # Users who download an unsigned build get a SmartScreen warning; publishing
-      # checksums lets them at least confirm the file arrived intact.
+      # Lets users confirm a download arrived intact -- worth having precisely
+      # because the artifacts are unsigned and trigger a SmartScreen warning.
       - name: Write checksums
-        if: always()
         shell: pwsh
         run: |
           Get-ChildItem dist/portable, dist/installer -File -Filter *.exe |
@@ -87,8 +83,15 @@ jobs:
             } | Set-Content dist/SHA256SUMS.txt
           Get-Content dist/SHA256SUMS.txt
 
-      - name: Upload checksums
-        if: always()
+      - name: Publish release
+        # Tag pushes publish; a manual run only proves the build works, so it must
+        # not create a release from refs/heads/main.
+        if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/SHA256SUMS.txt
+          files: |
+            dist/portable/CalicoPet-portable-*.exe
+            dist/installer/CalicoPet-setup-*.exe
+            dist/installer/*.blockmap
+            dist/SHA256SUMS.txt
+          generate_release_notes: true
