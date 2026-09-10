@@ -82,10 +82,17 @@ Get-ChildItem dist\portable, dist\installer -File -ErrorAction SilentlyContinue 
 
 Write-Host ''
 Write-Host 'signature status:'
-Get-ChildItem dist\portable, dist\installer -File -ErrorAction SilentlyContinue |
-  Where-Object { $_.Extension -eq '.exe' } |
-  ForEach-Object {
-    $status = (Get-AuthenticodeSignature $_.FullName).Status
-    $note = if ($status -eq 'NotSigned') { '  <- users will see "Unknown publisher"' } else { '' }
-    "  {0,-52} {1}{2}" -f $_.Name, $status, $note
-  }
+# Reporting only. Get-AuthenticodeSignature comes from Microsoft.PowerShell.Security,
+# which does not autoload in every host (it fails on GitHub's windows runner), so this
+# must degrade quietly instead of failing a build whose artifacts are already produced.
+if (Get-Command Get-AuthenticodeSignature -ErrorAction SilentlyContinue) {
+  Get-ChildItem dist\portable, dist\installer -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Extension -eq '.exe' } |
+    ForEach-Object {
+      $status = (Get-AuthenticodeSignature $_.FullName).Status
+      $note = if ($status -eq 'NotSigned') { '  <- users will see "Unknown publisher"' } else { '' }
+      "  {0,-52} {1}{2}" -f $_.Name, $status, $note
+    }
+} else {
+  Write-Host '  (Get-AuthenticodeSignature unavailable in this host -- skipped)'
+}

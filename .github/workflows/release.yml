@@ -64,13 +64,20 @@ jobs:
       - name: Build and package
         run: npm run pack:all
 
+      # Reporting only -- Get-AuthenticodeSignature does not autoload in every host,
+      # so a failure here must not fail a build whose artifacts are already produced.
       - name: Report signature status
         shell: pwsh
+        continue-on-error: true
         run: |
-          Get-ChildItem dist/portable, dist/installer -File -Filter *.exe |
-            ForEach-Object {
-              "{0,-46} {1}" -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status
-            }
+          if (Get-Command Get-AuthenticodeSignature -ErrorAction SilentlyContinue) {
+            Get-ChildItem dist/portable, dist/installer -File -Filter *.exe |
+              ForEach-Object {
+                "{0,-46} {1}" -f $_.Name, (Get-AuthenticodeSignature $_.FullName).Status
+              }
+          } else {
+            Write-Host '(Get-AuthenticodeSignature unavailable -- skipped)'
+          }
 
       # Lets users confirm a download arrived intact -- worth having precisely
       # because the artifacts are unsigned and trigger a SmartScreen warning.
