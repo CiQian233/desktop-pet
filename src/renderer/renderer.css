@@ -1,0 +1,38 @@
+/* The pet window is a transparent full-work-area overlay: nothing here may
+   paint a background, or the whole screen would get tinted. */
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+}
+
+body {
+  /* the overlay must never look like a UI surface */
+  cursor: default;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-user-drag: none;
+}
+
+#pet {
+  position: absolute;
+  /* left/top are set from JS: the sprite sits inside the window's transparent
+     padding, and the window hugs the sprite so clicks land on the cat */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  /* MUST accept pointer events: with `none` the canvas never becomes the event
+     target and dragging silently stops working */
+  pointer-events: auto;
+  /* no text cursor / selection artefacts over the sprite */
+  user-select: none;
+  -webkit-user-select: none;
+}

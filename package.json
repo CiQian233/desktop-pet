@@ -1,0 +1,71 @@
+{
+  "name": "desktop-pet",
+  "version": "0.1.0",
+  "private": true,
+  "description": "像素风桌面宠物 · 以我家三花猫为形象基底",
+  "main": "dist/main/main.js",
+  "author": "CiQian233",
+  "license": "MIT",
+  "scripts": {
+    "sync:assets": "node scripts/sync-assets.mjs",
+    "check:text": "node scripts/check-text.mjs",
+    "check:text:negative": "node scripts/check-text-negative.mjs",
+    "typecheck": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json",
+    "build": "npm run check:text && npm run sync:assets && npm run typecheck && node scripts/fix-esm-imports.mjs",
+    "watch": "tsc -p tsconfig.main.json --watch",
+    "start": "npm run build && electron .",
+    "dev": "electron .",
+    "pack:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target portable",
+    "pack:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target installer",
+    "pack:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target all"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "electron": "^33.2.1",
+    "electron-builder": "^25.1.8",
+    "typescript": "^5.7.2"
+  },
+  "build": {
+    "appId": "com.desktop-pet.calico",
+    "productName": "CalicoPet",
+    "copyright": "CiQian233",
+    "artifactName": "${productName}-${version}-${arch}.${ext}",
+    "compression": "maximum",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist/portable"
+    },
+    "files": [
+      "dist/main/**/*",
+      "dist/renderer/**/*",
+      "assets/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "plugins",
+        "to": "plugins",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": ["portable"],
+      "icon": "build/icon.ico"
+    },
+    "portable": {
+      "artifactName": "CalicoPet-portable-${version}.${ext}",
+      "unpackDirName": "CalicoPet"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "桌宠猫咪",
+      "artifactName": "CalicoPet-setup-${version}.${ext}",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico"
+    }
+  }
+}

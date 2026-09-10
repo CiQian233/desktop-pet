@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>桌宠形象 · 高密度像素三花猫</title>
+<style>
+  :root {
+    --bg:#0f1116; --panel:#191c24; --panel2:#222633; --line:#2e3444;
+    --ink:#e9e7e1; --dim:#969cab; --accent:#e0a45e; --accent2:#8fae5c;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.6 "Segoe UI","Microsoft YaHei",system-ui,sans-serif;
+  }
+  header{padding:18px 26px 14px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#1a1e27,#0f1116)}
+  h1{margin:0 0 3px;font-size:18px}
+  h1 span{color:var(--accent)}
+  .sub{color:var(--dim);font-size:12.5px}
+  .sub code{background:var(--panel2);padding:1px 5px;border-radius:4px;color:var(--accent2)}
+
+  .bar{display:flex;flex-wrap:wrap;gap:16px;align-items:center;padding:12px 26px;
+    border-bottom:1px solid var(--line);background:var(--panel)}
+  .lbl{color:var(--dim);font-size:11.5px;letter-spacing:1px;margin-right:6px}
+  .grp{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+  button{font:inherit;font-size:12.5px;color:var(--ink);cursor:pointer;
+    background:var(--panel2);border:1px solid var(--line);border-radius:7px;
+    padding:5px 11px;transition:.12s}
+  button:hover{border-color:#49516a}
+  button.on{background:var(--accent);border-color:var(--accent);color:#20180d;font-weight:600}
+  button.mode{background:transparent}
+  button.mode.on{background:var(--accent2);border-color:var(--accent2);color:#15200c}
+
+  /* ---- the desktop stage ---- */
+  .stagewrap{padding:20px 26px 0}
+  .stage{position:relative;height:430px;border:1px solid var(--line);border-radius:12px;
+    overflow:hidden;cursor:crosshair}
+  .stage .hint{position:absolute;left:12px;top:10px;z-index:6;font-size:11.5px;color:#fff;
+    background:rgba(0,0,0,.4);padding:3px 9px;border-radius:20px;backdrop-filter:blur(4px)}
+  #pet{position:absolute;bottom:0;image-rendering:pixelated;image-rendering:crisp-edges;
+    filter:drop-shadow(0 6px 6px rgba(0,0,0,.35));z-index:5;transition:none}
+  #pet.dragging{cursor:grabbing}
+  .shadow{position:absolute;border-radius:50%;background:radial-gradient(ellipse,rgba(0,0,0,.45),transparent 70%);
+    z-index:4;pointer-events:none}
+
+  /* ---- panels ---- */
+  .cols{display:grid;gap:20px;grid-template-columns:1.25fr 1fr;padding:20px 26px 60px}
+  @media (max-width:900px){.cols{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h3{margin:0 0 12px;font-size:14px;display:flex;justify-content:space-between;align-items:baseline}
+  .card h3 em{font-style:normal;color:var(--dim);font-size:11.5px}
+  .grid2{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:10px}
+  .tile{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 4px 6px;text-align:center}
+  .tile img{image-rendering:pixelated;width:auto;height:66px;margin:0 auto 4px;display:block}
+  .tile b{font-weight:500;font-size:11.5px;color:var(--dim)}
+  .stat{display:flex;justify-content:space-between;padding:4px 0;font-size:12.5px;color:var(--dim);
+    border-bottom:1px dashed #262b38}
+  .stat b{color:var(--ink);font-weight:500}
+  .swatches{display:flex;flex-wrap:wrap;gap:8px}
+  .sw{width:82px;border-radius:8px;overflow:hidden;border:1px solid var(--line)}
+  .sw i{display:block;height:38px}
+  .sw b{display:block;font-weight:500;font-size:10.5px;padding:4px 6px;background:var(--panel2);color:var(--dim)}
+  .note{margin-top:16px;padding:13px 16px;border-left:3px solid var(--accent2);
+    background:#181c25;border-radius:0 8px 8px 0;font-size:13px;color:#c9cdd8}
+  .note b{color:var(--accent)}
+</style>
+</head>
+<body>
+<header>
+  <h1>桌宠形象 · <span>高密度像素三花猫</span> （chibi 精修版）</h1>
+  <div class="sub">
+    原生 <code>72 × 68</code> 像素 · 29 帧动画 · 配色取自参考照片的真实毛色
+    · 腿爪、眼睛、花斑按你给的参考图提升到高密度细节
+  </div>
+</header>
+
+<div class="bar">
+  <div class="grp"><span class="lbl">行为模式</span>
+    <button class="mode on" data-mode="rest">原地待机</button>
+    <button class="mode" data-mode="roam">自由走动</button>
+    <button class="mode" data-mode="follow">跟着鼠标</button>
+  </div>
+  <div class="grp"><span class="lbl">动作</span><span id="animBtns"></span></div>
+  <div class="grp"><span class="lbl">倍率</span><span id="scaleBtns"></span></div>
+  <div class="grp"><span class="lbl">背景</span><span id="bgBtns"></span></div>
+  <div class="grp"><button id="patBtn">摸一下头</button></div>
+</div>
+
+<div class="stagewrap">
+  <div class="stage" id="stage">
+    <div class="hint">在这个区域里：原地待机会自然眨眼摇尾；自由走动模式它会来回散步；也可以直接拖它</div>
+    <div class="shadow" id="petshadow"></div>
+    <img id="pet" alt="pet">
+  </div>
+</div>
+
+<div class="cols">
+  <div class="card">
+    <h3>全部动作 <em>每格都在实时播放</em></h3>
+    <div class="grid2" id="tiles"></div>
+    <div class="note">
+      <b>这轮按你的三点反馈改了：</b>①走路改成 6 帧、两条前腿交替抬起落地，腿爪有脚趾和分离阴影；
+      ②尾巴改成 9 段锥形曲线，走路时随步幅左右摆动，待机时缓慢摇尾；
+      ③像素密度从 44×42 提到 <b>72×68</b>，加了毛色明暗层次、眼睛虹膜三段渐变+瞳孔+高光、内耳粉色、
+      胸腹过渡，并按参考图补了脚趾与描边。两种模式（原地/走动）在程序里可随时切换。
+    </div>
+  </div>
+
+  <div>
+    <div class="card" style="margin-bottom:20px">
+      <h3>规格</h3>
+      <div class="stat"><span>原生分辨率</span><b>72 × 68 px</b></div>
+      <div class="stat"><span>动画数 / 总帧数</span><b>7 / 29 帧</b></div>
+      <div class="stat"><span>当前显示</span><b id="dispNow">—</b></div>
+      <div class="stat"><span>调色板</span><b>22 色（含描边）</b></div>
+      <div class="stat"><span>建议默认倍率</span><b>3× → 216 × 204 px</b></div>
+    </div>
+    <div class="card">
+      <h3>配色来源 <em>照片取样 + 1px 显色校准</em></h3>
+      <div class="swatches" id="swatches"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const BG = {
+  checker: ["棋盘", "repeating-conic-gradient(#1b1e26 0% 25%,#171a21 0% 50%) 0 0/22px 22px"],
+  desktop: ["桌面壁纸", "linear-gradient(155deg,#2a3a4d,#4b3f55 55%,#6d4f45)"],
+  light: ["浅色窗口", "linear-gradient(180deg,#f2efe9,#d9d4ca)"],
+  dark: ["深色窗口", "linear-gradient(180deg,#23262e,#15171c)"],
+};
+const state = { mode:"rest", anim:"sit", scale:3, bg:"checker", pat:false };
+
+let META = null;
+const pet = document.getElementById("pet");
+const stage = document.getElementById("stage");
+const pshadow = document.getElementById("petshadow");
+
+// ---------- animation player ----------
+const player = { frames: [], fps: 8, loop: true, i: 0, t: 0, oneShot: null };
+
+function playAnim(key, { once = false } = {}) {
+  const a = META.anims[key];
+  player.frames = a.frames; player.fps = a.fps; player.loop = a.loop && !once;
+  player.i = 0; player.oneShot = once ? key : null;
+  pet.src = player.frames[0];
+  if (once) state.anim = "sit", refreshBar();
+}
+let last = performance.now();
+function tick(now) {
+  const dt = (now - last) / 1000; last = now;
+  player.t += dt;
+  const step = 1 / player.fps;
+  if (player.t >= step) {
+    player.t -= step;
+    player.i++;
+    if (player.i >= player.frames.length) {
+      if (player.loop) player.i = 0;
+      else { player.i = 0; player.oneShot = null; playAnim("sit"); return; }
+    }
+    pet.src = player.frames[player.i];
+  }
+  updateMotion(dt);
+  requestAnimationFrame(tick);
+}
+
+// ---------- motion ----------
+const box = () => ({ w: pet.width, h: pet.height });
+const pos = { x: 60, y: 0, vx: 0 };
+let dragging = false, dragOff = { x: 0, y: 0 }, mouse = { x: 0, y: 0 };
+
+function updateMotion(dt) {
+  const s = stage.getBoundingClientRect();
+  const { w, h } = box();
+  if (dragging) return;
+
+  if (state.mode === "roam") {
+    if (state.anim !== "walk") { state.anim = "walk"; refreshBar(); playAnim("walk"); }
+    pos.vx = pos.vx || 42;                       // px per second
+    pos.x += pos.vx * dt;
+    if (pos.x > s.width - w) { pos.x = s.width - w; pos.vx = -Math.abs(pos.vx); }
+    if (pos.x < 0) { pos.x = 0; pos.vx = Math.abs(pos.vx); }
+    pet.style.transform = `scaleX(${pos.vx < 0 ? -1 : 1})`;
+  } else if (state.mode === "follow") {
+    if (state.anim !== "walk") { state.anim = "walk"; refreshBar(); playAnim("walk"); }
+    const target = Math.max(0, Math.min(s.width - w, mouse.x - w / 2));
+    const dx = target - pos.x;
+    if (Math.abs(dx) > 3) {
+      pos.x += Math.sign(dx) * Math.min(Math.abs(dx), 120 * dt);
+      pet.style.transform = `scaleX(${dx < 0 ? -1 : 1})`;
+    } else if (state.anim !== "sit") { state.anim = "sit"; refreshBar(); playAnim("sit"); }
+  } else {
+    pet.style.transform = "scaleX(1)";
+  }
+  pet.style.left = pos.x + "px";
+  pshadow.style.left = (pos.x + w * 0.5 - w * 0.34) + "px";
+  pshadow.style.width = (w * 0.68) + "px";
+  pshadow.style.height = Math.max(6, h * 0.06) + "px";
+  pshadow.style.bottom = Math.max(2, h * 0.02) + "px";
+  pshadow.style.opacity = state.mode === "rest" ? 0.9 : 0.6;
+}
+
+// ---------- UI ----------
+const animBtns = document.getElementById("animBtns");
+function refreshBar() {
+  animBtns.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.a === state.anim));
+  document.querySelectorAll("[data-mode]").forEach(b => b.classList.toggle("on", b.dataset.mode === state.mode));
+  document.querySelectorAll("[data-s]").forEach(b => b.classList.toggle("on", +b.dataset.s === state.scale));
+  document.querySelectorAll("[data-bg]").forEach(b => b.classList.toggle("on", b.dataset.bg === state.bg));
+}
+function applyScale() {
+  const [w, h] = META.native;
+  pet.style.width = w * state.scale + "px";
+  pet.style.height = h * state.scale + "px";
+  document.getElementById("dispNow").textContent =
+    `${w * state.scale} × ${h * state.scale} px（${state.scale}×）`;
+  const s = stage.getBoundingClientRect();
+  pos.x = Math.min(pos.x, Math.max(0, s.width - pet.width));
+}
+
+function boot(meta) {
+  META = meta;
+  // main pet
+  playAnim("sit");
+  applyScale();
+  requestAnimationFrame(tick);
+
+  // anim buttons
+  Object.entries(meta.anims).forEach(([k, a]) => {
+    const b = document.createElement("button");
+    b.textContent = a.label; b.dataset.a = k;
+    b.onclick = () => { state.anim = k; refreshBar(); playAnim(k); };
+    animBtns.appendChild(b);
+  });
+  // scale buttons
+  const sb = document.getElementById("scaleBtns");
+  [2, 3, 4, 6].forEach(s => {
+    const b = document.createElement("button");
+    b.textContent = s + "×"; b.dataset.s = s;
+    b.onclick = () => { state.scale = s; refreshBar(); applyScale(); };
+    sb.appendChild(b);
+  });
+  // bg buttons
+  const bb = document.getElementById("bgBtns");
+  Object.entries(BG).forEach(([k, [label, css]]) => {
+    const b = document.createElement("button");
+    b.textContent = label; b.dataset.bg = k;
+    b.onclick = () => { state.bg = k; stage.style.background = css; refreshBar(); };
+    bb.appendChild(b);
+  });
+  stage.style.background = BG[state.bg][1];
+  document.querySelectorAll("[data-mode]").forEach(b => {
+    b.onclick = () => {
+      state.mode = b.dataset.mode;
+      if (state.mode === "rest") { state.anim = "sit"; playAnim("sit"); }
+      refreshBar();
+    };
+  });
+  document.getElementById("patBtn").onclick = () => {
+    state.mode = "rest"; state.anim = "pat"; refreshBar(); playAnim("pat", { once: true });
+  };
+
+  // per-anim live tiles
+  const tiles = document.getElementById("tiles");
+  Object.entries(meta.anims).forEach(([k, a]) => {
+    const el = document.createElement("div");
+    el.className = "tile";
+    el.innerHTML = `<img data-k="${k}" src="${a.frames[0]}"><b>${a.label}<br>${a.count}帧 ${a.fps}fps</b>`;
+    tiles.appendChild(el);
+  });
+  document.querySelectorAll(".tile img").forEach(img => {
+    const a = meta.anims[img.dataset.k];
+    let i = 0;
+    setInterval(() => { i = (i + 1) % a.frames.length; img.src = a.frames[i]; }, 1000 / a.fps);
+  });
+
+  // palette
+  const PAL = [
+    ["furWhite","#F3EFE8"],["furWhiteMid","#DFDAD1"],["furWhiteShade","#AAA196"],
+    ["furOrange","#BF8342"],["furOrangeDeep","#9E6430"],
+    ["furDark","#3A3128"],["furDarkDeep","#181411"],
+    ["irisLit","#D89E42"],["irisBase","#B2762C"],["irisDark","#805020"],
+    ["nosePink","#D69292"],["innerEar","#DBA098"],["outline","#1E1915"],
+  ];
+  document.getElementById("swatches").innerHTML = PAL.map(([n,c]) =>
+    `<div class="sw"><i style="background:${c}"></i><b>${n}<br>${c}</b></div>`).join("");
+}
+
+// ---------- drag + pat ----------
+stage.addEventListener("pointerdown", e => {
+  const r = pet.getBoundingClientRect(), sr = stage.getBoundingClientRect();
+  const x = e.clientX - r.left, y = e.clientY - r.top;
+  if (x < 0 || y < 0 || x > r.width || y > r.height) return;
+  dragging = true; pet.classList.add("dragging");
+  dragOff = { x: e.clientX - r.left, y: e.clientY - r.top };
+  state.mode = "rest"; state.anim = "carry"; refreshBar(); playAnim("carry");
+  pet.setPointerCapture(e.pointerId);
+});
+stage.addEventListener("pointermove", e => {
+  const sr = stage.getBoundingClientRect();
+  mouse = { x: e.clientX - sr.left, y: e.clientY - sr.top };
+  if (!dragging) return;
+  pos.x = Math.max(-10, Math.min(sr.width - pet.width + 10, e.clientX - sr.left - dragOff.x));
+  pet.style.left = pos.x + "px";
+});
+stage.addEventListener("pointerup", () => {
+  if (!dragging) return;
+  dragging = false; pet.classList.remove("dragging");
+  state.anim = "pat"; refreshBar(); playAnim("pat", { once: true });
+});
+pet.addEventListener("dblclick", () => {
+  state.anim = "angry"; refreshBar(); playAnim("angry");
+  setTimeout(() => { if (state.anim === "angry") { state.anim = "sit"; refreshBar(); playAnim("sit"); } }, 1600);
+});
+
+fetch("pet.json").then(r => r.json()).then(boot).catch(err => {
+  document.querySelector(".hint").textContent = "pet.json 加载失败：" + err;
+});
+</script>
+</body>
+</html>

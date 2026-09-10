@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>桌宠形象筛选 · 三花猫像素化</title>
+<style>
+  :root {
+    --bg: #14161c;
+    --panel: #1d2029;
+    --panel-2: #252935;
+    --line: #333949;
+    --ink: #e8e6e0;
+    --dim: #9aa0b0;
+    --accent: #e0a45e;
+    --accent-2: #8fae5c;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.6 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  header {
+    padding: 22px 28px 18px; border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #1b1f28, #14161c);
+  }
+  h1 { margin: 0 0 4px; font-size: 19px; letter-spacing: .5px; }
+  h1 span { color: var(--accent); }
+  .sub { color: var(--dim); font-size: 13px; }
+  .sub code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; color: var(--accent-2); }
+
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 18px; align-items: center;
+    padding: 14px 28px; border-bottom: 1px solid var(--line);
+    background: var(--panel); position: sticky; top: 0; z-index: 10;
+  }
+  .bar .grp { display: flex; align-items: center; gap: 8px; }
+  .bar .lbl { color: var(--dim); font-size: 12px; letter-spacing: 1px; }
+  button {
+    font: inherit; font-size: 13px; color: var(--ink); cursor: pointer;
+    background: var(--panel-2); border: 1px solid var(--line);
+    border-radius: 7px; padding: 6px 13px; transition: .12s;
+  }
+  button:hover { border-color: #4b536a; transform: translateY(-1px); }
+  button.on { background: var(--accent); border-color: var(--accent); color: #201a10; font-weight: 600; }
+
+  main { padding: 24px 28px 60px; }
+  .grid { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(330px, 1fr)); }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    overflow: hidden; transition: .15s;
+  }
+  .card.pick { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 10px 30px -14px var(--accent); }
+  .card h2 {
+    margin: 0; padding: 13px 16px 11px; font-size: 15px;
+    display: flex; justify-content: space-between; align-items: baseline;
+    border-bottom: 1px solid var(--line);
+  }
+  .card h2 em { font-style: normal; color: var(--dim); font-size: 12px; }
+  .stage {
+    height: 300px; display: grid; place-items: center; position: relative;
+    background:
+      radial-gradient(circle at 50% 30%, #232735, #171a21 70%),
+      repeating-conic-gradient(#1b1e26 0% 25%, #171a21 0% 50%) 0 0/22px 22px;
+  }
+  .stage img {
+    image-rendering: pixelated; image-rendering: crisp-edges;
+    filter: drop-shadow(0 8px 10px rgba(0,0,0,.5));
+    transition: width .15s, height .15s;
+  }
+  .shadow {
+    position: absolute; bottom: 46px; width: 96px; height: 12px; border-radius: 50%;
+    background: radial-gradient(ellipse, rgba(0,0,0,.55), transparent 70%);
+  }
+  .meta { padding: 12px 16px 14px; border-top: 1px solid var(--line); }
+  .meta .row { display: flex; justify-content: space-between; color: var(--dim); font-size: 12.5px; padding: 2px 0; }
+  .meta .row b { color: var(--ink); font-weight: 500; }
+  .pickbtn { width: 100%; margin-top: 10px; }
+  .card.pick .pickbtn { background: var(--accent); border-color: var(--accent); color: #201a10; font-weight: 600; }
+
+  h3.sec { margin: 40px 0 14px; font-size: 15px; color: var(--ink); }
+  h3.sec small { color: var(--dim); font-weight: 400; margin-left: 8px; font-size: 12.5px; }
+  .photos { display: flex; gap: 12px; flex-wrap: wrap; }
+  .photos figure { margin: 0; width: 176px; }
+  .photos img { width: 100%; border-radius: 9px; border: 1px solid var(--line); display: block; }
+  .photos figcaption { color: var(--dim); font-size: 11.5px; padding-top: 5px; }
+
+  .swatches { display: flex; flex-wrap: wrap; gap: 10px; }
+  .sw { width: 96px; border-radius: 9px; overflow: hidden; border: 1px solid var(--line); }
+  .sw i { display: block; height: 46px; }
+  .sw b { display: block; font-weight: 500; font-size: 11.5px; padding: 5px 7px; background: var(--panel); color: var(--dim); }
+  .note {
+    margin-top: 26px; padding: 15px 18px; border-left: 3px solid var(--accent-2);
+    background: #1a1e26; border-radius: 0 9px 9px 0; color: #c9cdd8; font-size: 13.5px;
+  }
+  .note b { color: var(--accent); }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<header>
+  <h1>桌宠形象筛选 · <span>三花猫像素化</span></h1>
+  <div class="sub">
+    配色取自参考照片的真实毛色 · 每款都可用下方按钮切换动作与显示倍率 · 选好后点击卡片上的「选它」
+  </div>
+</header>
+
+<div class="bar">
+  <div class="grp"><span class="lbl">动作</span><div id="anims"></div></div>
+  <div class="grp"><span class="lbl">显示倍率</span><div id="scales"></div></div>
+  <div class="grp"><span class="lbl">背景</span><div id="bgs"></div></div>
+</div>
+
+<main>
+  <div class="grid" id="grid"></div>
+
+  <h3 class="sec">配色来源 <small>以下色值由照片取样后校准，直接用于像素形象</small></h3>
+  <div class="swatches" id="swatches"></div>
+
+  <h3 class="sec">参考原图 <small>形状与花斑分布的对照依据</small></h3>
+  <div class="photos" id="photos"></div>
+
+  <div class="note">
+    <b>怎么反馈：</b>告诉我选中的款式（或"用 A 的头 + B 的身子"这类组合），以及想改的地方
+    （耳朵、花斑位置、眼睛大小、尾巴、身体胖瘦…）。定稿后我会把形象接进 Electron 桌宠程序，
+    并搭好插件目录，后续新功能（喂食、番茄钟、天气、提醒等）都能以插件形式加入。
+  </div>
+</main>
+
+<script src="sprites.js"></script>
+<script>
+const S = window.SPRITES;
+const state = { anim: "sit", scale: 6, bg: "checker" };
+
+// ---------- toolbar ----------
+const animBox = document.getElementById("anims");
+Object.entries(S.anims).forEach(([k, v]) => {
+  const b = document.createElement("button");
+  b.textContent = v.label;
+  b.className = k === state.anim ? "on" : "";
+  b.onclick = () => { state.anim = k; refreshBar(); render(); };
+  b.dataset.k = k;
+  animBox.appendChild(b);
+});
+const scaleBox = document.getElementById("scales");
+[3, 4, 6, 8].forEach(s => {
+  const b = document.createElement("button");
+  b.textContent = s + "×";
+  b.className = s === state.scale ? "on" : "";
+  b.onclick = () => { state.scale = s; refreshBar(); render(); };
+  b.dataset.s = s;
+  scaleBox.appendChild(b);
+});
+const bgBox = document.getElementById("bgs");
+const BGS = {
+  checker: ["棋盘", "repeating-conic-gradient(#1b1e26 0% 25%, #171a21 0% 50%) 0 0/22px 22px"],
+  dark:    ["深色", "#191c23"],
+  light:   ["浅色桌面", "linear-gradient(180deg,#e9e6df,#cfcac0)"],
+  desktop: ["壁纸感", "linear-gradient(160deg,#2b3a4a,#4a3f52 60%,#6b4f47)"],
+};
+Object.entries(BGS).forEach(([k, [label, css]]) => {
+  const b = document.createElement("button");
+  b.textContent = label;
+  b.className = k === state.bg ? "on" : "";
+  b.onclick = () => { state.bg = k; refreshBar(); render(); };
+  b.dataset.b = k;
+  bgBox.appendChild(b);
+});
+function refreshBar() {
+  animBox.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.k === state.anim));
+  scaleBox.querySelectorAll("button").forEach(b => b.classList.toggle("on", +b.dataset.s === state.scale));
+  bgBox.querySelectorAll("button").forEach(b => b.classList.toggle("on", b.dataset.b === state.bg));
+}
+
+// ---------- cards ----------
+const grid = document.getElementById("grid");
+grid.innerHTML = Object.entries(S.variants).map(([name, v]) => `
+  <div class="card" data-v="${name}">
+    <h2>${v.label}<em>${name} · ${v.native[0]}×${v.native[1]} px</em></h2>
+    <div class="stage">
+      <div class="shadow"></div>
+      <img class="sprite" alt="${name}">
+    </div>
+    <div class="meta">
+      <div class="row"><span>原生分辨率</span><b>${v.native[0]} × ${v.native[1]}</b></div>
+      <div class="row"><span>当前显示</span><b class="disp"></b></div>
+      <div class="row"><span>动作帧数</span><b>${S.anims[state.anim].count} 帧 @ ${S.anims[state.anim].fps}fps</b></div>
+      <button class="pickbtn" data-pick="${name}">选它</button>
+    </div>
+  </div>`).join("");
+
+grid.querySelectorAll("[data-pick]").forEach(b => {
+  b.onclick = () => {
+    grid.querySelectorAll(".card").forEach(c => c.classList.remove("pick"));
+    const card = b.closest(".card");
+    card.classList.add("pick");
+    const name = b.dataset.pick;
+    b.textContent = "✓ 已选中 " + S.variants[name].label;
+    grid.querySelectorAll("[data-pick]").forEach(o => { if (o !== b) o.textContent = "选它"; });
+    history.replaceState(null, "", "#" + name);
+  };
+});
+
+// ---------- animation ----------
+const timers = {};
+function render() {
+  const bgCss = BGS[state.bg][1];
+  Object.entries(S.variants).forEach(([name, v]) => {
+    const card = grid.querySelector(`[data-v="${name}"]`);
+    const stage = card.querySelector(".stage");
+    const img = card.querySelector(".sprite");
+    const native = v.native;
+    img.style.width = native[0] * state.scale + "px";
+    img.style.height = native[1] * state.scale + "px";
+    stage.style.background = bgCss;
+    card.querySelector(".disp").textContent =
+      (native[0] * state.scale) + " × " + (native[1] * state.scale) + " px";
+  });
+  playAll();
+}
+function playAll() {
+  Object.entries(S.variants).forEach(([name, v]) => {
+    clearInterval(timers[name]);
+    const spec = S.anims[state.anim];
+    const urls = v.anims[state.anim];
+    const img = grid.querySelector(`[data-v="${name}"] .sprite`);
+    let i = 0;
+    img.src = urls[0];
+    const step = 1000 / spec.fps;
+    timers[name] = setInterval(() => {
+      i++;
+      if (i >= urls.length) {
+        if (!spec.loop) { i = 0; clearInterval(timers[name]); timers[name] = setInterval(() => {
+          img.src = urls[0]; }, 1400); return; }
+        i = 0;
+      }
+      img.src = urls[i];
+    }, step);
+  });
+}
+
+// ---------- swatches + photos ----------
+const PALETTE = [
+  ["furWhite", "#F3EFE8"], ["furWhiteMid", "#DFDAD1"], ["furWhiteShade", "#AAA196"],
+  ["furOrange", "#BF8342"], ["furOrangeDeep", "#9E6430"],
+  ["furDark", "#3A3128"], ["furDarkDeep", "#181411"],
+  ["eyeIris", "#98A85C"], ["nosePink", "#D69292"], ["outline", "#1E1915"],
+];
+document.getElementById("swatches").innerHTML = PALETTE.map(([n, c]) =>
+  `<div class="sw"><i style="background:${c}"></i><b>${n}<br>${c}</b></div>`).join("");
+
+const PHOTOS = ["1789017258615.jpg", "1789017258703.jpg", "1789017258671.jpg",
+                "1789017258533.jpg", "1789016755481.jpg"];
+document.getElementById("photos").innerHTML = PHOTOS.map(p =>
+  `<figure><img src="photos/${p}" alt="${p}" loading="lazy"><figcaption>${p.replace(".jpg", "")}</figcaption></figure>`).join("");
+
+const hash = location.hash.slice(1);
+if (S.variants[hash]) grid.querySelector(`[data-pick="${hash}"]`).click();
+render();
+</script>
+</body>
+</html>

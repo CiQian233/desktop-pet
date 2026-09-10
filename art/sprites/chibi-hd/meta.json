@@ -1,0 +1,100 @@
+{
+  "variant": "chibi-hd",
+  "label": "三花猫 · 高密度像素",
+  "native": [
+    76,
+    68
+  ],
+  "scale": 6,
+  "anims": {
+    "sit": {
+      "label": "坐着待机",
+      "fps": 2.2,
+      "loop": true,
+      "count": 4,
+      "frames": [
+        "frames/sit_0.png",
+        "frames/sit_1.png",
+        "frames/sit_2.png",
+        "frames/sit_3.png"
+      ]
+    },
+    "blink": {
+      "label": "眨眼",
+      "fps": 8.0,
+      "loop": true,
+      "count": 6,
+      "frames": [
+        "frames/blink_0.png",
+        "frames/blink_1.png",
+        "frames/blink_2.png",
+        "frames/blink_3.png",
+        "frames/blink_4.png",
+        "frames/blink_5.png"
+      ]
+    },
+    "walk": {
+      "label": "走路",
+      "fps": 7.0,
+      "loop": true,
+      "count": 6,
+      "frames": [
+        "frames/walk_0.png",
+        "frames/walk_1.png",
+        "frames/walk_2.png",
+        "frames/walk_3.png",
+        "frames/walk_4.png",
+        "frames/walk_5.png"
+      ]
+    },
+    "sleep": {
+      "label": "打盹",
+      "fps": 1.4,
+      "loop": true,
+      "count": 4,
+      "frames": [
+        "frames/sleep_0.png",
+        "frames/sleep_1.png",
+        "frames/sleep_2.png",
+        "frames/sleep_3.png"
+      ]
+    },
+    "pat": {
+      "label": "被摸头",
+      "fps": 3.2,
+      "loop": false,
+      "count": 5,
+      "frames": [
+        "frames/pat_0.png",
+        "frames/pat_1.png",
+        "frames/pat_2.png",
+        "frames/pat_3.png",
+        "frames/pat_4.png"
+      ]
+    },
+    "carry": {
+      "label": "被拎起后颈",
+      "fps": 3.4,
+      "loop": true,
+      "count": 6,
+      "frames": [
+        "frames/carry_0.png",
+        "frames/carry_1.png",
+        "frames/carry_2.png",
+        "frames/carry_3.png",
+        "frames/carry_4.png",
+        "frames/carry_5.png"
+      ]
+    },
+    "angry": {
+      "label": "生气",
+      "fps": 3.0,
+      "loop": true,
+      "count": 2,
+      "frames": [
+        "frames/angry_0.png",
+        "frames/angry_1.png"
+      ]
+    }
+  }
+}

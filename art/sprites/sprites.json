@@ -1,0 +1,49 @@
+{
+  "variants": {
+    "chibi": {
+      "label": "大头圆身 · 呆萌",
+      "size": [
+        44,
+        42
+      ],
+      "frames": [
+        "idle_0",
+        "idle_1",
+        "blink_0",
+        "walk_0",
+        "walk_1",
+        "squash"
+      ]
+    },
+    "real": {
+      "label": "照片比例 · 写实",
+      "size": [
+        52,
+        50
+      ],
+      "frames": [
+        "idle_0",
+        "idle_1",
+        "blink_0",
+        "walk_0",
+        "walk_1",
+        "squash"
+      ]
+    },
+    "retro": {
+      "label": "32×32 · 复古",
+      "size": [
+        34,
+        34
+      ],
+      "frames": [
+        "idle_0",
+        "idle_1",
+        "blink_0",
+        "walk_0",
+        "walk_1",
+        "squash"
+      ]
+    }
+  }
+}

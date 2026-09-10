@@ -1,0 +1,31 @@
+# 统一换行符：入库存 LF，检出按平台转换，避免整仓库 diff 抖动
+* text=auto
+
+# 二进制文件禁止任何转换
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.ico  binary
+*.exe  binary
+*.dll  binary
+*.pak  binary
+*.asar binary
+
+# Windows 脚本保持 CRLF（PowerShell 5.1 对 LF 的 .ps1 处理不稳）
+*.ps1 text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+# 源码统一 LF
+*.ts   text eol=lf
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.cjs  text eol=lf
+*.py   text eol=lf
+*.json text eol=lf
+*.md   text eol=lf
+
+# 生成物：让 GitHub 语言统计忽略，折叠 diff
+art/sprites/**     linguist-generated=true
+preview/frames/**  linguist-generated=true
+package-lock.json  linguist-generated=true -diff

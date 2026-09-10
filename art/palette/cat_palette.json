@@ -1,0 +1,106 @@
+{
+  "buckets": {
+    "orange": "#A17E5B",
+    "white": "#D5D5D2",
+    "dark": "#332B22",
+    "eye": "#9F9978"
+  },
+  "pixel_palette": {
+    "furWhite": {
+      "hex": "#E6E2DE",
+      "rgb": [
+        230,
+        226,
+        222
+      ]
+    },
+    "furWhiteMid": {
+      "hex": "#D6D5D2",
+      "rgb": [
+        214,
+        213,
+        210
+      ]
+    },
+    "furWhiteShade": {
+      "hex": "#CBC8C4",
+      "rgb": [
+        203,
+        200,
+        196
+      ]
+    },
+    "furOrange": {
+      "hex": "#BC9D69",
+      "rgb": [
+        188,
+        157,
+        105
+      ]
+    },
+    "furOrangeDeep": {
+      "hex": "#84633E",
+      "rgb": [
+        132,
+        99,
+        62
+      ]
+    },
+    "furDark": {
+      "hex": "#1A1713",
+      "rgb": [
+        26,
+        23,
+        19
+      ]
+    },
+    "furDarkSoft": {
+      "hex": "#44392D",
+      "rgb": [
+        68,
+        57,
+        45
+      ]
+    },
+    "eyeIris": {
+      "hex": "#A8A073",
+      "rgb": [
+        168,
+        160,
+        115
+      ]
+    },
+    "eyeHighlight": {
+      "hex": "#F6F8F2",
+      "rgb": [
+        246,
+        248,
+        242
+      ]
+    },
+    "nosePink": {
+      "hex": "#FFB3B4",
+      "rgb": [
+        255,
+        179,
+        180
+      ]
+    },
+    "earPink": {
+      "hex": "#FFBBBC",
+      "rgb": [
+        255,
+        187,
+        188
+      ]
+    },
+    "outline": {
+      "hex": "#100E0B",
+      "rgb": [
+        16,
+        14,
+        11
+      ]
+    }
+  }
+}
