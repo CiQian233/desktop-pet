@@ -50,6 +50,23 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # ---------------------------------------------------------------- gating
+      # Fail fast, BEFORE the multi-minute packaging step. The text guard's
+      # negative self-test runs first (a guard that cannot catch damage is
+      # worthless), then the full build (resource sync + typecheck), then a
+      # smoke boot of the app with its 9 hard assertions.
+      - name: Text guard (with negative self-test)
+        run: |
+          npm run check:text
+          npm run check:text:negative
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test
+        timeout-minutes: 5
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1 -Seconds 6
+
       # ---------------------------------------------------------------- signing
       # Azure Trusted Signing needs an Entra ID login. Only runs when the secret
       # is configured; otherwise the build stays unsigned.
@@ -101,4 +118,7 @@ jobs:
             dist/installer/CalicoPet-setup-*.exe
             dist/installer/*.blockmap
             dist/SHA256SUMS.txt
+          # the curated changelog for this tag becomes the release body;
+          # generate_release_notes appends the auto-generated section after it
+          body_path: changelog/${{ github.ref_name }}.md
           generate_release_notes: true

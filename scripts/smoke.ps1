@@ -49,7 +49,17 @@ if (Test-Path $log) { Get-Content $log -Encoding UTF8 } else { Write-Host '(no l
 
 Write-Host ''
 Write-Host '--- verdict ---'
-if (-not (Test-Path $log)) { Write-Host 'FAIL: no log output'; exit 1 }
+if (-not (Test-Path $log)) {
+  Write-Host 'FAIL: no log output'
+  Write-Host '  A missing log means the app never wrote a single line, i.e. it likely never'
+  Write-Host '  really started -- distinguish this from a crash AFTER startup:'
+  Write-Host '    * single-instance lock: another CalicoPet / electron already running?'
+  Write-Host '    * permission block: "Lock file can not be created" / error 0x5 in a console run'
+  Write-Host '    * restricted sandbox session: Electron cannot start at all there'
+  Write-Host '    * dev build: is dist/ built (npm run build)?  packaged: does the exe exist?'
+  Write-Host '  See docs/PROJECT_LOG.md section 4l for the known cases.'
+  exit 1
+}
 $text = Get-Content $log -Raw -Encoding UTF8
 $bad = @('renderer gone', 'render-process-gone', 'fatal', 'Failed to load', 'ERR_', 'never became ready')
 # literal substring checks: -like would treat the '[' in '[smoke]' as a wildcard

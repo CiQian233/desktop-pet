@@ -1,13 +1,5 @@
+import type { Channel } from './types';
 import type { LoadedAnim, SpriteAtlas } from './atlas';
-import type { Channel, Reason } from './types';
-
-/** A transient animation that returns to the base when it finishes. */
-const TRANSIENT: Record<string, Reason | undefined> = {
-  pat: 'pat',
-  angry: 'angry',
-  carry: 'drag',
-  land: 'land',
-};
 
 /**
  * Owns the animation clock: which sequence is playing, which frame within it,
@@ -16,7 +8,7 @@ const TRANSIENT: Record<string, Reason | undefined> = {
  * Deliberately free of drawing and physics so it can be unit-reasoned about.
  */
 export class Animator {
-  ch: Channel = { base: 'sit', override: null, index: 0, elapsed: 0, cycles: 0, reason: 'idle' };
+  ch: Channel = { base: 'sit', override: null, index: 0, elapsed: 0, cycles: 0 };
   private warned = new Set<string>();
 
   constructor(private readonly atlas: SpriteAtlas) {}
@@ -88,7 +80,6 @@ export class Animator {
     this.ch.index = 0;
     this.ch.elapsed = 0;
     this.ch.persistent = false;
-    this.ch.reason = 'drag';
   }
 
   get isTransient(): boolean {
@@ -114,11 +105,9 @@ export class Animator {
       if (this.ch.index >= anim.frames.length) {
         if (this.ch.override && !this.ch.persistent) {
           // transient finished -> hand control back to the base animation
-          const tr = this.ch.override;
           this.ch.override = null;
           this.ch.index = 0;
           this.ch.elapsed = 0;
-          this.ch.reason = TRANSIENT[tr] ?? 'idle';
         } else if (this.ch.override) {
           // a held pose keeps looping until it is released
           this.ch.index = 0;

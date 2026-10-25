@@ -16,20 +16,7 @@ export interface PetMeta {
   anims: Record<string, AnimMeta>;
 }
 
-export type Reason =
-  | 'idle'
-  | 'wake'
-  | 'blink'
-  | 'sleep'
-  | 'walk'
-  | 'drag'
-  | 'fall'
-  | 'land'
-  | 'pat'
-  | 'angry';
-
-/** One animation channel: a named frame sequence with its own clock. */
-export interface Channel {
+/** One animation channel: a named frame sequence with its own clock. */export interface Channel {
   /** base animation from the atlas, e.g. "sit" */
   base: string;
   /** transient override, e.g. "pat" -- cleared when it finishes */
@@ -45,8 +32,6 @@ export interface Channel {
   elapsed: number;
   /** cycles of the base animation completed (drives blink scheduling) */
   cycles: number;
-  /** pending mood, applied on the next base animation change */
-  reason: Reason;
 }
 
 export interface Vec {

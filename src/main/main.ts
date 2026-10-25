@@ -620,11 +620,9 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
   if (TEST_PROBE === 'drag') {
     // the renderer's drag API takes SCREEN coordinates, and the pet's world
     // position is what the diagnostic reports
-    const spriteW = SPRITE_NATIVE.w * store.all().scale;
     const spriteH = SPRITE_NATIVE.h * store.all().scale;
     const from = { x: diag.pos.x, y: diag.pos.y - Math.round(spriteH / 2) };
     const to = { x: diag.pos.x - 120, y: diag.pos.y - 150 };
-    void spriteW;
     const sent = (await js(`(() => {
       const t = window.__petTest;
       if (!t) return { hook: false };
@@ -824,9 +822,9 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     };
   }
 
-  // "inputreport": snapshot the renderer's input counters. Another process
-  // (scripts/verify-input.ps1) drives the real cursor while we watch, which is
-  // the only end-to-end check of Windows' event delivery.
+  // "inputreport": snapshot the renderer's input counters. Run it manually while
+  // a human (or another process) drives the real cursor; that is the only
+  // end-to-end check of Windows' event delivery.
   if (TEST_PROBE === 'inputreport') {
     const read = async () =>
       ((await js('window.__petDiag ?? null')) as (SmokeDiag & { input?: Record<string, number> }) | null)

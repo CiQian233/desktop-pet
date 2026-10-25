@@ -38,7 +38,6 @@ export interface PetBridge {
   onCursor(cb: (pos: { x: number; y: number }) => void): void;
   onRecenter(cb: (info: FrameInfo) => void): void;
   onPat(cb: () => void): void;
-  onWake(cb: () => void): void;
 }
 
 const bridge: PetBridge = {
@@ -55,7 +54,6 @@ const bridge: PetBridge = {
   onCursor: (cb) => ipcRenderer.on('pet:cursor', (_e, pos) => cb(pos)),
   onRecenter: (cb) => ipcRenderer.on('pet:recenter', (_e, info) => cb(info)),
   onPat: (cb) => ipcRenderer.on('pet:pat', () => cb()),
-  onWake: (cb) => ipcRenderer.on('pet:wake', () => cb()),
 };
 
 contextBridge.exposeInMainWorld('pet', bridge);

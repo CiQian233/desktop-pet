@@ -59,6 +59,8 @@ let spriteMask: Uint8Array | null = null;
 let maskW = 0;
 let maskH = 0;
 let maskKey = '';
+/** scratch canvas for mask rasterisation, reused across rebuilds */
+const maskCanvas = document.createElement('canvas');
 
 /** input counters, published in diagnostics so a drag regression stays visible */
 const inputStats = { down: 0, up: 0, move: 0, hit: 0, dragStarts: 0, cancel: 0, mask: false, maskCell: '' };
@@ -254,7 +256,7 @@ function scheduleIdleLife(): void {
   }, blinkIn);
 }
 
-/** current squash amount, 0..1, decaying after a landing */
+/** true during the "inhale" half of an idle cycle (drives the tiny breath scaling) */
 let breathing = false;
 
 function updateBaseAnim(): void {
@@ -343,11 +345,6 @@ function wireIpc(): void {
   window.pet.onPat(() => {
     lastInteraction = performance.now();
     pet.pat();
-  });
-
-  window.pet.onWake(() => {
-    lastInteraction = performance.now();
-    pet.wake();
   });
 }
 
@@ -627,6 +624,8 @@ function wireInput(): void {
 let last = performance.now();
 let diagDue = 250;
 let diagFrames = 0;
+/** dirty flag for draw(): everything draw() consumes, keyed; '' forces a draw */
+let lastDrawKey = '';
 
 function loop(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
@@ -683,16 +682,31 @@ function loop(now: number): void {
 
   const local = localAnchor();
   const frame = anim.currentFrame();
-  const key = `${frame.src}|${pet.facing}|${pet.scale}|${Math.round(local.x)}|${Math.round(local.y)}`;
+  // The mask lives in SPRITE-LOCAL space, so only the frame, the facing (the
+  // mirroring) and the scale can change its content. Position is deliberately
+  // NOT part of the key: it changes every frame while the pet walks or is
+  // dragged, and rebuilding meant a full getImageData readback per frame.
+  const key = `${frame.src}|${pet.facing}|${pet.scale}`;
   if (key !== maskKey) {
-    buildMask(frame, pet.facing > 0, local);
+    buildMask(frame, pet.facing > 0);
     maskKey = key;
   }
 
   // keep the window glued to the pet: this is what makes clicks land on the cat
   reportPosition();
 
-  draw(frame, local);
+  // Repaint only when something draw() consumes actually changed: the frame,
+  // its placement, the facing/scale (in `key`), the breath phase, the squash
+  // decay, or the device pixel ratio. A sitting or PAUSED pet changes none of
+  // these, so its canvas keeps its last pixels instead of being cleared and
+  // redrawn 60 times a second -- that full-rate redraw was pure idle cost.
+  const drawKey =
+    `${key}|${Math.round(local.x)}|${Math.round(local.y)}` +
+    `|${breathing ? 1 : 0}|${Math.round(pet.squashFactor * 1000)}|${window.devicePixelRatio || 1}`;
+  if (drawKey !== lastDrawKey) {
+    lastDrawKey = drawKey;
+    draw(frame);
+  }
 
   // publish continuously while a probe is attached, so a frozen snapshot means
   // the loop really stopped rather than "we only sampled once"
@@ -710,37 +724,35 @@ function loop(now: number): void {
 // ---------------------------------------------------------------------------
 
 /**
- * Rasterise the current frame once per (frame, facing, position) and remember
+ * Rasterise the current frame once per (frame, facing, scale) and remember
  * which cells hold a visible pixel, so clicks only "land" on the cat's body.
  * Cells are in sprite-local space. `flip` mirrors the artwork, which is drawn
  * facing LEFT, so it is true whenever the cat faces right.
  */
-function buildMask(img: HTMLImageElement, flip: boolean, local: { x: number; y: number }): void {
+function buildMask(img: HTMLImageElement, flip: boolean): void {
   const w = pet.spriteW;
   const h = pet.spriteH;
-  const off = document.createElement('canvas');
   // size in CSS pixels on purpose: hitTest converts the pointer into CSS-pixel
   // sprite coordinates, so the mask must be indexed in those units (sizing it in
   // device pixels would still give the right cell count at dpr=1, which is why
-  // this looked fine, but it would break on a scaled display)
-  off.width = w;
-  off.height = h;
-  const octx = off.getContext('2d', { willReadFrequently: true })!;
+  // this looked fine, but it would break on a scaled display).
+  // Resizing also wipes the canvas and resets its context state, which is what
+  // makes reuse safe between rebuilds of different scales.
+  maskCanvas.width = w;
+  maskCanvas.height = h;
+  const octx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
   octx.imageSmoothingEnabled = false;
-  // the sprite is drawn bottom-centred on its own canvas
-  octx.drawImage(img, 0, 0, w, h);
+  // the sprite is drawn bottom-centred on its own canvas; mirror it around that
+  // canvas's own centre in a single pass when the cat faces right
   if (flip) {
-    // same mirroring as draw(), around the sprite's own centre
-    octx.setTransform(1, 0, 0, 1, 0, 0);
-    octx.clearRect(0, 0, w, h);
     octx.save();
     octx.translate(w, 0);
     octx.scale(-1, 1);
     octx.drawImage(img, 0, 0, w, h);
     octx.restore();
+  } else {
+    octx.drawImage(img, 0, 0, w, h);
   }
-  void local;
-
   maskW = Math.ceil(w / MASK_CELL);
   maskH = Math.ceil(h / MASK_CELL);
   const data = octx.getImageData(0, 0, w, h).data;
@@ -764,7 +776,7 @@ function buildMask(img: HTMLImageElement, flip: boolean, local: { x: number; y: 
   inputStats.maskCell = `${maskW}x${maskH}`;
 }
 
-function draw(frame: HTMLImageElement, local: { x: number; y: number }): void {
+function draw(frame: HTMLImageElement): void {
   const w = pet.spriteW;
   const h = pet.spriteH;
   const dpr = window.devicePixelRatio || 1;
@@ -803,7 +815,6 @@ function draw(frame: HTMLImageElement, local: { x: number; y: number }): void {
   const drawW = w * (1 + squash * 0.18);
   ctx.drawImage(frame, (w - drawW) / 2, h - drawH, drawW, drawH);
   ctx.restore();
-  void local;
 }
 
 function publishDiagnostics(): void {

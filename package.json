@@ -1,6 +1,6 @@
 {
   "name": "desktop-pet",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "像素风桌面宠物 · 以我家三花猫为形象基底",
   "main": "dist/main/main.js",

@@ -18,6 +18,9 @@ const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const SPRITE_SRC = join(ROOT, 'art', 'sprites', 'chibi-hd');
 const RENDERER_OUT = join(ROOT, 'dist', 'renderer', 'renderer');
 
+/** the sprite's native size -- the single source of truth for this run */
+const meta = JSON.parse(await readFile(join(SPRITE_SRC, 'meta.json'), 'utf8'));
+
 const problems = [];
 const step = async (label, fn) => {
   try {
@@ -39,6 +42,10 @@ function wantedFrame(name) {
 
 await step('renderer sprites/frames', async () => {
   const dst = join(RENDERER_OUT, 'sprites', 'frames');
+  // start from an EMPTY directory: electron-builder packages dist/renderer
+  // wholesale, so frames left over from renamed/removed animations would
+  // otherwise linger in dist forever and ship inside the exe
+  await rm(dst, { recursive: true, force: true });
   await mkdir(dst, { recursive: true });
   const names = await readdir(SPRITE_SRC);
   const frames = names.filter(wantedFrame);
@@ -50,7 +57,6 @@ await step('renderer sprites/frames', async () => {
 });
 
 await step('renderer sprites/pet.json', async () => {
-  const meta = JSON.parse(await readFile(join(SPRITE_SRC, 'meta.json'), 'utf8'));
   const dst = join(RENDERER_OUT, 'sprites');
   await mkdir(dst, { recursive: true });
   await writeFile(join(dst, 'pet.json'), JSON.stringify(meta, null, 2), 'utf8');
@@ -65,6 +71,27 @@ await step('renderer sprites/pet.json', async () => {
   if (missing.length) throw new Error(`meta references missing frames: ${missing.join(', ')}`);
   const total = Object.values(meta.anims).reduce((n, a) => n + a.frames.length, 0);
   console.log(`       ${Object.keys(meta.anims).length} anims / ${total} frames verified`);
+});
+
+await step('sprite size constants match meta.json', async () => {
+  // the native size is hardcoded in a few places (main sizes the window from
+  // it, the test scripts assert against it); meta.json is the authority, so a
+  // re-export that changed the canvas must not leave them behind
+  const [w, h] = meta.native;
+  const sites = [
+    { file: join(ROOT, 'src', 'main', 'main.ts'), re: /SPRITE_NATIVE\s*=\s*\{\s*w:\s*(\d+)\s*,\s*h:\s*(\d+)\s*\}/ },
+    { file: join(ROOT, 'scripts', 'smoke.ps1'), re: /\$NATIVE_W\s*=\s*(\d+)[\s\S]*?\$NATIVE_H\s*=\s*(\d+)/ },
+    { file: join(ROOT, 'scripts', 'verify-behaviour.ps1'), re: /\$NW\s*=\s*(\d+)[\s\S]*?\$NH\s*=\s*(\d+)/ },
+  ];
+  for (const site of sites) {
+    const src = await readFile(site.file, 'utf8');
+    const m = src.match(site.re);
+    if (!m) throw new Error(`sprite size constant not found in ${site.file}`);
+    if (Number(m[1]) !== w || Number(m[2]) !== h) {
+      throw new Error(`${site.file} says ${m[1]}x${m[2]} but meta.json says ${w}x${h} -- re-export the sprites?`);
+    }
+  }
+  console.log(`       meta.json native ${w}x${h} matches main.ts, smoke.ps1, verify-behaviour.ps1`);
 });
 
 await step('renderer shell -> dist', async () => {

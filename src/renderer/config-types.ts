@@ -62,7 +62,6 @@ export interface Bridge {
   onCursor(cb: (pos: { x: number; y: number }) => void): void;
   onRecenter(cb: (info: FrameInfo) => void): void;
   onPat(cb: () => void): void;
-  onWake(cb: () => void): void;
 }
 
 declare global {

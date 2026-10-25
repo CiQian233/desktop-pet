@@ -74,7 +74,9 @@ function coerce(raw: unknown): PetConfig {
   if (r.facing === -1) out.facing = -1;
   if (typeof r.autostart === 'boolean') out.autostart = r.autostart;
   if (typeof r.alwaysOnTop === 'boolean') out.alwaysOnTop = r.alwaysOnTop;
-  if (typeof r.displayId === 'number') out.displayId = r.displayId;
+  // a NaN displayId would never match a real display, but unlike null it would
+  // also never say "no preference" -- keep it finite or drop it
+  if (typeof r.displayId === 'number' && Number.isFinite(r.displayId)) out.displayId = r.displayId;
   return out;
 }
 

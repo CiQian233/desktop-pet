@@ -269,11 +269,6 @@ export class PetController {
     this.anim.playTransient('angry');
   }
 
-  wake(): void {
-    this.anim.setBase('sit');
-    this.anim.playTransient('blink');
-  }
-
   // -- per-frame ---------------------------------------------------------
 
   update(
@@ -292,7 +287,6 @@ export class PetController {
         // a drag that just ended leaves the pet in the air: gravity takes it
         if (this.wasDragging) this.onGround = this.y >= this.groundY - 0.5;
 
-        const wasChasing = this.chasing;
         this.chasing = false;
 
         if (this.mode === 'follow') {
@@ -306,7 +300,6 @@ export class PetController {
           this.vx = 0;
           // NOTE: rest mode deliberately keeps the idle pose chosen by the
           // renderer (sit / blink / sleep); it must not force `walk` here.
-          void wasChasing;
         }
 
         this.enforceEdges();

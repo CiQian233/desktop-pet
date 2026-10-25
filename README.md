@@ -92,12 +92,11 @@ desktop-pet/
 │  │  └─ preload.ts      contextBridge 安全桥
 │  ├─ renderer/      渲染进程：像素动画 + 物理 + 交互
 │  │  ├─ renderer.ts     主循环、输入、绘制、暂停遮罩
-│  │  ├─ config-types.ts 与主进程共用的配置契约
+│  │  ├─ config-types.ts 与主进程共用的配置契约（preload.ts 是权威侧）
 │  │  └─ core/
 │  │     ├─ atlas.ts       帧加载
 │  │     ├─ animator.ts    动画时钟（基础动画 + 一次性反应）
 │  │     └─ controller.ts  位置/速度/重力/行为模式
-│  └─ shared/layout.ts  窗口布局契约与 IPC 频道名
 ├─ art/sprites/chibi-hd/  像素帧（生成物，勿手改）
 ├─ tools/                 形象生成器（Python）
 ├─ preview/               形象预览页
