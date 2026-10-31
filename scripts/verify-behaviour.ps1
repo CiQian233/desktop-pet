@@ -12,6 +12,11 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The host tooling may launch this script with Electron forced into Node mode
+# (ELECTRON_RUN_AS_NODE=1) and with an injected NODE_OPTIONS preload. Both make
+# electron.exe exit before app.whenReady; the app test must start a real runtime.
+$env:ELECTRON_RUN_AS_NODE = $null
+$env:NODE_OPTIONS = $null
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
@@ -64,12 +69,24 @@ $cases = @(
   # travelled, not the displacement over the window: roam stands still between
   # destinations, so a rest inside the window can leave spanX near zero.
   @{ name = 'smooth-roam'; config = @{ mode = 'roam' }; probe = 'smooth'; expect = {
-      param($d) $d.smooth.ok -eq $true -and $d.smooth.pathX -gt 40 -and $d.smooth.maxStepY -le 260 } },
+      param($d) $d.smooth.ok -eq $true -and ($d.smooth.pathX + $d.smooth.pathY) -gt 40 -and $d.smooth.maxStepY -le 260 } },
+  # At fast speed the old 120ms recentre throttle moved the native window in
+  # batches whose median step was ~32px. A median over moving frames is robust
+  # to one OS scheduling spike while still rejecting that batchy cadence.
+  @{ name = 'smooth-roam-fast'; config = @{ mode = 'roam'; roamSpeed = 'fast' }; probe = 'smooth'; smokeMs = 7000; waitMs = 35000; expect = {
+      param($d) $d.smooth.ok -eq $true -and ($d.smooth.pathX + $d.smooth.pathY) -gt 40 -and $d.smooth.medianStepX -le 10 -and $d.smooth.medianStepY -le 10 } },
   @{ name = 'smooth-follow'; config = @{ mode = 'follow' }; probe = 'smooth'; expect = {
-      param($d) $d.smooth.ok -eq $true -and $d.smooth.pathX -gt 40 -and $d.smooth.maxStepY -le 70 } },
+      param($d) $d.smooth.ok -eq $true -and ($d.smooth.pathX + $d.smooth.pathY) -gt 40 -and `
+      $d.smooth.medianStepX -le 12 -and $d.smooth.medianStepY -le 12 } },
   # a drag must track the pointer 1:1 and never move backwards
   @{ name = 'drag-path'; config = @{}; probe = 'dragpath'; expect = {
       param($d) $d.dragPath.ok -eq $true -and $d.dragPath.backSteps -eq 0 } },
+  # the alpha-silhouette hit area must sit inside the rendered sprite
+  @{ name = 'hit-grid'; config = @{}; probe = 'hitgrid'; expect = {
+      param($d) $d.hitGrid.ok -eq $true } },
+  # walk only while the controller is moving, never while resting between legs
+  @{ name = 'gait-anim'; config = @{}; probe = 'gait'; expect = {
+      param($d) $d.gaitCheck.ok -eq $true } },
   # the canvas must be hit-testable: `pointer-events: none` on it makes pointer
   # events never target it, and dragging silently stops working
   @{ name = 'dom-target'; config = @{}; probe = 'domtarget'; expect = {
@@ -84,7 +101,8 @@ $cases = @(
       param($d)
       $d.dragProbe.ok -eq $true -and $d.dragProbe.gotToFirstMove -eq $true -and `
       $d.dragProbe.gotToSecondMove -eq $true -and $d.dragProbe.stuckAfterRelease -eq $false -and `
-      $d.dragProbe.releasedCleanly -eq $true -and $d.dragProbe.dragWindowDrift -le 20 } },
+      $d.dragProbe.releasedCleanly -eq $true -and $d.dragProbe.dragWindowDrift -le 20 -and `
+      $d.dragProbe.dragWindowSettleMs -le 50 } },
   # CARRY: dragging must hold the "picked up by the scruff" pose for the WHOLE
   # drag. As a transient it expired after ~0.3s, and an idle blink could steal it.
   @{ name = 'carry-pose'; config = @{}; probe = 'carry'; smokeMs = 14000; expect = {
@@ -133,12 +151,19 @@ foreach ($case in $cases) {
   $userData = Join-Path $logDirFull "userdata-$($case.name)"
   Remove-Item $userData -Recurse -Force -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force -Path $userData | Out-Null
+  # --user-data-dir alone is ignored once app.setName() has changed the default
+  # path, so pass the explicit test-only override as well.
+  $env:PET_USER_DATA_DIR = $userData
   $common = @('--user-data-dir', $userData)
 
   if ($Exe) {
     $proc = Start-Process -FilePath $Exe -ArgumentList $common -PassThru
   } else {
-    $proc = Start-Process -FilePath $electron -ArgumentList (@('.') + $common) -PassThru -NoNewWindow -WorkingDirectory $root
+    # No -NoNewWindow: Windows PowerShell 5.1 fails to start a child when the
+    # inherited environment contains case-duplicated variables such as
+    # HTTPS_PROXY/https_proxy. The app writes its own log, so sharing this
+    # console is not required.
+    $proc = Start-Process -FilePath $electron -ArgumentList (@('.') + $common) -PassThru -WorkingDirectory $root
   }
   $proc.WaitForExit($waitMs) | Out-Null
   if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
@@ -168,8 +193,9 @@ foreach ($case in $cases) {
       $diag.hitCheck.centreProbe.hit, $diag.hitCheck.paddingProbe.hit, $diag.hitCheck.pad
   }
   if ($diag.smooth) {
-    $summary += " | smooth pathX={0} spanX={1} flipsX={2} flipsY={3} maxStepX={4} maxStepY={5}" -f `
-      $diag.smooth.pathX, $diag.smooth.spanX, $diag.smooth.flipsX, $diag.smooth.flipsY, `
+    $summary += " | smooth path={0}/{1} spanX={2} flipsX={3} flipsY={4} stepMed={5}/{6} stepMax={7}/{8}" -f `
+      $diag.smooth.pathX, $diag.smooth.pathY, $diag.smooth.spanX, $diag.smooth.flipsX, `
+      $diag.smooth.flipsY, $diag.smooth.medianStepX, $diag.smooth.medianStepY, `
       $diag.smooth.maxStepX, $diag.smooth.maxStepY
   }
   if ($diag.dragPath) {
@@ -177,16 +203,24 @@ foreach ($case in $cases) {
       $diag.dragPath.pointerDelta, $diag.dragPath.petDelta, `
       $diag.dragPath.backSteps, $diag.dragPath.winDelta
   }
+  if ($diag.hitGrid) {
+    $summary += " | hitGrid hits={0} delta={1},{2} ok={3}" -f `
+      $diag.hitGrid.hits, $diag.hitGrid.delta.x, $diag.hitGrid.delta.y, $diag.hitGrid.ok
+  }
+  if ($diag.gaitCheck) {
+    $summary += " | gait rest={0} moving={1} stopped={2}" -f `
+      $diag.gaitCheck.resting, $diag.gaitCheck.moving, $diag.gaitCheck.stopped
+  }
   if ($diag.domTarget) {
     $summary += " | dom hit={0} bubbled={1} pointerEvents={2}" -f `
       $diag.domTarget.hitIsCanvas, $diag.domTarget.bubbled, $diag.domTarget.pointerEvents
   }
   if ($diag.dragProbe) {
-    $summary += " | dragPointer first={0} second={1} stuckAfterRelease={2} clean={3} petted={4} facing={5}/{6}/{7} winDrift={8}" -f `
+    $summary += " | dragPointer first={0} second={1} stuckAfterRelease={2} clean={3} petted={4} facing={5}/{6}/{7} winDrift={8} settle={9}ms" -f `
       $diag.dragProbe.gotToFirstMove, $diag.dragProbe.gotToSecondMove, `
       $diag.dragProbe.stuckAfterRelease, $diag.dragProbe.releasedCleanly, $diag.dragProbe.pettedAfter, `
       $diag.dragProbe.facingFar, $diag.dragProbe.facingMid, $diag.dragProbe.facingThird, `
-      $diag.dragProbe.dragWindowDrift
+      $diag.dragProbe.dragWindowDrift, $diag.dragProbe.dragWindowSettleMs
   }
   if ($diag.roamCheck) {
     $summary += " | roam slices={0}/{1} upper={2} offFloor={3} maxStepY={4} used={5}..{6} leftGroundBy={7}" -f `
@@ -213,6 +247,7 @@ foreach ($case in $cases) {
   else { Write-Host ("FAIL  {0,-18} {1}" -f $case.name, $summary); $failures++ }
 }
 
+Remove-Item Env:PET_USER_DATA_DIR -ErrorAction SilentlyContinue
 Write-Host ''
 if ($failures -gt 0) { Write-Host "$failures case(s) failed."; exit 1 }
 Write-Host "All $($cases.Count) cases passed."

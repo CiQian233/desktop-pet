@@ -39,6 +39,13 @@ const RENDERER_HTML = join(APP_DIR, 'dist', 'renderer', 'renderer', 'index.html'
 // leave a stray %APPDATA%\desktop-pet behind).
 app.setName('CalicoPet');
 
+// Chromium's --user-data-dir does not override app.getPath('userData') after a
+// custom app name is set, so the regression scripts need an explicit override.
+// This is test-only: normal launches never set the variable and keep using
+// %APPDATA%\CalicoPet.
+const TEST_USER_DATA_DIR = process.env.PET_USER_DATA_DIR;
+if (TEST_USER_DATA_DIR) app.setPath('userData', TEST_USER_DATA_DIR);
+
 /** native sprite dimensions -- must match assets/sprites/pet.json */
 const SPRITE_NATIVE = { w: 76, h: 68 };
 /** transparent margin around the sprite, inside the window */
@@ -228,7 +235,22 @@ function createWindow(): void {
   if (!existsSync(RENDERER_HTML)) {
     console.error('[main] renderer bundle missing at', RENDERER_HTML);
   }
-  void win.loadFile(RENDERER_HTML);
+
+  // The pet is a local, offline surface. It never opens child windows or
+  // navigates away, so deny both instead of relying on the CSP alone.
+  win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  win.webContents.on('will-navigate', (event, url) => {
+    if (url !== win?.webContents.getURL()) {
+      console.error('[main] blocked renderer navigation:', url);
+      event.preventDefault();
+    }
+  });
+  win.webContents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
+    if (isMainFrame) console.error(`[main] renderer load failed (${code} ${description}): ${url}`);
+  });
+  void win.loadFile(RENDERER_HTML).catch((err) => {
+    console.error('[main] failed to load renderer:', err);
+  });
 
   if (process.env.PET_DEVTOOLS === '1') {
     win.webContents.openDevTools({ mode: 'detach' });
@@ -281,6 +303,8 @@ function frameInfo(): Record<string, unknown> {
     workArea: area,
     pad: WINDOW_PAD,
     version: app.getVersion(),
+    /** test hooks are installed only for automated runs, never in normal use */
+    testMode: SMOKE_MS > 0 || TEST_PROBE.length > 0,
   };
 }
 
@@ -289,20 +313,34 @@ function frameInfo(): Record<string, unknown> {
 // ---------------------------------------------------------------------------
 
 function patch(part: Partial<PetConfig>): PetConfig {
+  const previous = store.all();
   const next = store.patch(part);
-  applyConfig(next);
+  applyConfig(previous, next, part);
   return next;
 }
 
-function applyConfig(cfg: PetConfig): void {
+function applyConfig(previous: PetConfig, cfg: PetConfig, part: Partial<PetConfig>): void {
+  // Persisting the pet's position happens after every drag. It must not resize
+  // the native window, rebuild the tray menu, or bounce a config copy through
+  // IPC: those are UI changes, not position changes.
+  const keys = Object.keys(part);
+  const positionOnly = keys.length > 0 && keys.every((key) => key === 'x' || key === 'y' || key === 'facing');
+  if (positionOnly) return;
+
   if (win) {
-    win.setAlwaysOnTop(cfg.alwaysOnTop, 'screen-saver');
-    const { w, h } = windowSize(cfg.scale);
-    const b = win.getBounds();
-    win.setBounds({ x: b.x, y: b.y, width: w, height: h });
+    if (previous.alwaysOnTop !== cfg.alwaysOnTop) {
+      win.setAlwaysOnTop(cfg.alwaysOnTop, 'screen-saver');
+    }
+    if (previous.scale !== cfg.scale) {
+      const { w, h } = windowSize(cfg.scale);
+      const b = win.getBounds();
+      win.setBounds({ x: b.x, y: b.y, width: w, height: h });
+    }
     win.webContents.send('config:changed', { ...cfg });
   }
   tray?.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+  // Idempotent, and only relevant when mode or paused changed; keeping the call
+  // unconditional here avoids duplicating the eligibility rules in two places.
   syncCursorPolling();
 }
 
@@ -690,9 +728,10 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
         ySamples.push(b.y);
       }
     }, 16);
-    // make the pet move for a while, then stop
+    // Sample long enough to include at least one roam leg even when the pet
+    // starts a rest period; 2.6s could contain no movement at all.
     await js('window.__petTest && window.__petTest.info()');
-    await new Promise((r) => setTimeout(r, 2600));
+    await new Promise((r) => setTimeout(r, 3800));
     clearInterval(timer);
 
     let flipsX = 0;
@@ -700,6 +739,9 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     let maxStepX = 0;
     let maxStepY = 0;
     let pathX = 0;          // total horizontal distance travelled
+    let pathY = 0;          // total vertical distance travelled
+    const movingStepsX: number[] = [];
+    const movingStepsY: number[] = [];
     for (let i = 2; i < samples.length; i++) {
       const d1 = samples[i - 1] - samples[i - 2];
       const d2 = samples[i] - samples[i - 1];
@@ -708,12 +750,15 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       }
       maxStepX = Math.max(maxStepX, Math.abs(d2));
       pathX += Math.abs(d2);
+      if (d2 !== 0) movingStepsX.push(Math.abs(d2));
     }
     for (let i = 2; i < ySamples.length; i++) {
       const d1 = ySamples[i - 1] - ySamples[i - 2];
       const d2 = ySamples[i] - ySamples[i - 1];
       if (Math.sign(d1) !== 0 && Math.sign(d2) !== 0 && Math.sign(d1) !== Math.sign(d2)) flipsY++;
       maxStepY = Math.max(maxStepY, Math.abs(d2));
+      pathY += Math.abs(d2);
+      if (d2 !== 0) movingStepsY.push(Math.abs(d2));
     }
     // a little back-and-forth is normal (the pet can turn around); dozens of
     // direction changes per second would be a feedback loop. The step limit
@@ -724,6 +769,11 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     // that matters is direction reversals, not the size of a deliberate hop.
     const roamMode = store.all().mode === 'roam';
     const stepLimitY = roamMode ? 320 : 70;
+    const median = (xs: number[]) => {
+      if (!xs.length) return 0;
+      const sorted = xs.slice().sort((a, b) => a - b);
+      return sorted[Math.floor(sorted.length / 2)];
+    };
     return {
       smooth: {
         samples: samples.length,
@@ -735,10 +785,15 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
         // stands still for 0.5-1.6s between destinations, and a rest that lands
         // inside the sample window made spanX read 2px and look like "not moving"
         pathX,
+        pathY,
         flipsX,
         flipsY,
         maxStepX,
         maxStepY,
+        // Steps over zero only: a resting pet contributes 0px samples and
+        // would otherwise make any batch size look like a small median.
+        medianStepX: median(movingStepsX),
+        medianStepY: median(movingStepsY),
         stepLimitY,
         ok: flipsX <= 8 && flipsY <= 8 && maxStepX <= 70 && maxStepY <= stepLimitY,
       },
@@ -975,7 +1030,12 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
           const probe = () => { seen = true; };
           window.addEventListener('pointerdown', probe);
           c.dispatchEvent(new PointerEvent('pointerdown', {
-            bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, button: 0,
+            bubbles: true,
+            clientX: r.left + r.width / 2,
+            clientY: r.top + r.height / 2,
+            screenX: r.left + r.width / 2,
+            screenY: r.top + r.height / 2,
+            button: 0,
           }));
           window.removeEventListener('pointerdown', probe);
           return seen;
@@ -1007,13 +1067,18 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       const t = window.__petTest;
       if (!t) return { hook: false };
       const r0 = t.info().windowRect;
-      // screen -> client coordinates, exactly what a real pointer event carries
+      // Screen coordinates are authoritative. Deliberately give pointermove a
+      // wrong clientX, simulating the synthetic mouse events Windows emits when
+      // the window moves underneath a stationary cursor. A client-coordinate
+      // implementation would drift by this offset; screenX must ignore it.
       const ev = (type, sx, sy, buttons, button) => {
         const r = t.info().windowRect;
         window.dispatchEvent(new PointerEvent(type, {
           bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse',
           isPrimary: true, button: button, buttons: buttons,
-          clientX: sx - r.x, clientY: sy - r.y,
+          clientX: sx - r.x + (type === 'pointermove' ? 240 : 0),
+          clientY: sy - r.y,
+          screenX: sx, screenY: sy,
         }));
       };
       const frame = () => new Promise((r) => requestAnimationFrame(() => r(null)));
@@ -1037,6 +1102,18 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       t.finishDrag();
       await frame();
       await frame();
+      // Let the native window finish catching up with the setup drags before
+      // the measured legs begin; otherwise a slow IPC echo from setup is
+      // misreported as pointer-follow latency.
+      await new Promise((resolve) => setTimeout(resolve, 250));
+      let setupLag = -1;
+      for (let i = 0; i < 20; i++) {
+        const real = window.pet.realBounds();
+        const rendered = t.info().windowRect;
+        setupLag = real ? Math.round(Math.hypot(real.x - rendered.x, real.y - rendered.y)) : -1;
+        if (setupLag >= 0 && setupLag <= 2) break;
+        await frame();
+      }
       const mid = t.info().pet;
       const down = { x: mid.x, y: mid.y - P.halfH };
       const hitAtStart = t.hitTest(down.x, down.y);
@@ -1060,14 +1137,39 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       // just measures how far the pet travelled, not the lag.
       const leg = async (x, y) => {
         ev('pointermove', x, y, 1, -1);
-        await frame();
-        await frame();
-        // synchronous, so the real bounds and the renderer's idea of them describe
-        // the SAME instant
-        const r = window.pet.realBounds();
-        const rendered = t.info().windowRect;
-        const lag = r ? Math.round(Math.hypot(r.x - rendered.x, r.y - rendered.y)) : -1;
-        return { lag, info: t.info() };
+        // Compare the ACTUAL native origin with the origin the pet's current
+        // position requires. The renderer's windowRect cache deliberately waits
+        // for the real echo (drawing must not lead the native window), so
+        // comparing against that cache would measure IPC latency, not whether
+        // the visible pet is following the pointer.
+        const started = performance.now();
+        let r = null;
+        let info = t.info();
+        let expectedX = 0;
+        let expectedY = 0;
+        let lag = -1;
+        // The app updates the window at 60Hz, while rAF can run at 165Hz. A
+        // measurement after "two rAFs" can therefore legitimately precede the
+        // next app tick. Poll until the window has settled, and assert that it
+        // settles within a few 60Hz frames rather than immediately.
+        for (let i = 0; i < 20; i++) {
+          r = window.pet.realBounds();
+          info = t.info();
+          expectedX = Math.round(info.pet.x - P.pad - (P.nativeW * info.pet.scale) / 2);
+          expectedY = Math.round(info.pet.y - P.pad - P.nativeH * info.pet.scale);
+          lag = r ? Math.round(Math.hypot(r.x - expectedX, r.y - expectedY)) : -1;
+          if (lag >= 0 && lag <= 2) break;
+          if (performance.now() - started > 120) break;
+          await frame();
+        }
+        return {
+          lag,
+          settleMs: Math.round(performance.now() - started),
+          info,
+          actual: r ? { x: r.x, y: r.y } : null,
+          expected: { x: expectedX, y: expectedY },
+          rendered: { x: info.windowRect.x, y: info.windowRect.y },
+        };
       };
       const farLeg = await leg(p1.x, p1.y);
       const afterFar = farLeg.info;
@@ -1076,6 +1178,14 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       const thirdLeg = await leg(p3.x, p3.y);
       const afterThird = thirdLeg.info;
       const lagSamples = [farLeg.lag, midLeg.lag, thirdLeg.lag];
+      const settleSamples = [farLeg.settleMs, midLeg.settleMs, thirdLeg.settleMs];
+      const lagDetail = [farLeg, midLeg, thirdLeg].map((x) => ({
+        lag: x.lag,
+        settleMs: x.settleMs,
+        actual: x.actual,
+        expected: x.expected,
+        rendered: x.rendered,
+      }));
 
       // release with NO pointerup delivered: the render-loop watchdog must end
       // the drag, otherwise the pet goes deaf until it restarts
@@ -1093,7 +1203,7 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
 
       return {
         hook: true, hitAtStart, down, p1, p2, p3, park: parked, expect3, win0: r0,
-        lagSamples,
+        lagSamples, settleSamples, lagDetail, setupLag,
         parkSteps: { startedA, grabA, startedB, mid },
         afterDown: { dragging: afterDown.dragging, offset: afterDown.offset },
         afterFar: { dragging: afterFar.dragging, pet: afterFar.pet, facing: afterFar.facing },
@@ -1109,6 +1219,9 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       park: { x: 2400, y: 900 },
       area: activeArea(),
       spriteH: SPRITE_NATIVE.h * store.all().scale,
+      nativeW: SPRITE_NATIVE.w,
+      nativeH: SPRITE_NATIVE.h,
+      pad: WINDOW_PAD,
     })) as null | Record<string, unknown>;
 
     if (!res) return { dragProbe: { ok: false, reason: 'no test hook' } };
@@ -1146,7 +1259,9 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       : -1;
     const stuck = res.stuckAfterRelease as boolean;
     const lagSamples = (res.lagSamples as number[] | undefined) ?? [];
+    const settleSamples = (res.settleSamples as number[] | undefined) ?? [];
     const dragWindowDrift = lagSamples.length ? Math.max(...lagSamples) : -1;
+    const dragWindowSettleMs = settleSamples.length ? Math.max(...settleSamples) : -1;
     const droppedAtY = (res.afterWatchdog as { pet?: { y: number } })?.pet?.y ?? 0;
     const finalY = up.pet ? up.pet.y : 0;
     return {
@@ -1169,9 +1284,9 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
         facingFar: (far as { facing?: number })?.facing ?? null,
         facingMid: (mid as { facing?: number })?.facing ?? null,
         facingThird: (third as { facing?: number })?.facing ?? null,
-        // the window must track the cat WHILE dragging: a gap means the dead zone
-        // or the report throttle is still applied, i.e. the pet lags the pointer
+        // The window must catch the cat within a few 60Hz frames while dragging.
         dragWindowDrift,
+        dragWindowSettleMs,
         facingFollowsDrag:
           (far as { facing?: number })?.facing === -1 &&
           (mid as { facing?: number })?.facing === 1 &&
@@ -1186,7 +1301,9 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
           stuck === false &&
           (res.afterWatchdog as { dragging?: boolean })?.dragging === false &&
           (far as { facing?: number })?.facing === -1 &&
-          (mid as { facing?: number })?.facing === 1,
+          (mid as { facing?: number })?.facing === 1 &&
+          dragWindowDrift <= 20 &&
+          dragWindowSettleMs <= 50,
       },
     };
   }
@@ -1409,6 +1526,34 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     };
   }
 
+  // "gait": the walk animation must follow real locomotion, not merely the
+  // selected mode. Regression guard for the cat walking in place during a roam
+  // rest (and after follow has already arrived).
+  if (TEST_PROBE === 'gait') {
+    const res = (await js(`(async () => {
+      const t = window.__petTest;
+      if (!t) return null;
+      const base = () => t.animState().base;
+      const settle = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      await t.patch({ mode: 'rest', paused: false });
+      await settle(250);
+      const resting = base();
+      await t.patch({ mode: 'roam', roamSpeed: 'slow' });
+      await settle(350);
+      const moving = base();
+      await t.patch({ mode: 'rest' });
+      await settle(550);
+      const stopped = base();
+      return { resting, moving, stopped };
+    })`)) as null | { resting: string; moving: string; stopped: string };
+    return {
+      gaitCheck: {
+        ...res,
+        ok: !!res && res.moving === 'walk' && res.resting !== 'walk' && res.stopped !== 'walk',
+      },
+    };
+  }
+
   // "hitgrid": sweep the hit test across the whole window and report the screen
   // rectangle where it says "yes". Direct way to catch an offset between the
   // drawn cat and the clickable area.
@@ -1456,10 +1601,12 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     };
     if (!res) return { hitGrid: { ok: false, reason: 'no test hook' } };
 
-    // where the cat is actually drawn, in screen coordinates
+    // Where the cat is actually drawn, in screen coordinates. `local` is the
+    // bottom-centre inside the window, so no extra pad belongs in this formula:
+    // the canvas covers the whole window and draw() applies the pad itself.
     const drawnScreen = {
-      x: Math.round(bounds.x + res.local.x - res.sprite.w / 2 + res.pad),
-      y: Math.round(bounds.y + res.local.y - res.sprite.h + res.pad),
+      x: Math.round(bounds.x + res.local.x - res.sprite.w / 2),
+      y: Math.round(bounds.y + res.local.y - res.sprite.h),
       w: res.sprite.w,
       h: res.sprite.h,
     };
@@ -1472,12 +1619,18 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
         }
       : null;
 
+    // The hit mask follows the cat's alpha silhouette, which is naturally
+    // smaller than the sprite's bounding box (and not centred inside it because
+    // of the tail). Compare containment with a 1px tolerance instead of
+    // demanding equal bounds -- the old width/height check could never pass for
+    // a real silhouette.
     const ok =
       !!hitScreen &&
-      Math.abs(hitScreen.x - drawnScreen.x) <= 12 &&
-      Math.abs(hitScreen.y - drawnScreen.y) <= 12 &&
-      Math.abs(hitScreen.w - drawnScreen.w) <= 16 &&
-      Math.abs(hitScreen.h - drawnScreen.h) <= 16;
+      res.hits > 0 &&
+      hitScreen.x >= drawnScreen.x - 1 &&
+      hitScreen.y >= drawnScreen.y - 1 &&
+      hitScreen.x + hitScreen.w <= drawnScreen.x + drawnScreen.w + 1 &&
+      hitScreen.y + hitScreen.h <= drawnScreen.y + drawnScreen.h + 1;
 
     return {
       hitGrid: {

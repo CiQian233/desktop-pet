@@ -12,6 +12,13 @@ let cfg: PetConfig;
 let atlas: SpriteAtlas;
 let anim: Animator;
 let pet: PetController;
+/**
+ * Automated runs drive pointer events synthetically. A real cursor resting over
+ * the moving window would otherwise inject trusted pointermove events into the
+ * middle of a probe and overwrite its scripted path, making the result depend
+ * on where the physical mouse happened to be.
+ */
+let testMode = false;
 
 /** the pet window's rectangle in screen coordinates, kept up to date by main */
 let windowRect = { x: 0, y: 0, width: 0, height: 0 };
@@ -157,6 +164,7 @@ async function boot(): Promise<void> {
 
   const frame = await window.pet.ready();
   cfg = frame.config;
+  testMode = frame.testMode;
   applyFrame(frame);
 
   // The controller works in WORK-AREA (world) coordinates: that is the frame the
@@ -175,11 +183,14 @@ async function boot(): Promise<void> {
   layoutCanvas();
   wireIpc();
   wireInput();
-  installTestHook();
+  // Introspection hooks stay out of normal builds. Smoke/behaviour runs opt in
+  // through main's `testMode`, so packaged users never get a global API that can
+  // drive drags or mutate config from the page.
+  if (frame.testMode) installTestHook();
   scheduleIdleLife();
   reportPosition(true);
 
-  requestAnimationFrame(loop);
+  scheduleFrame(0);
 
   console.log(
     `[pet] 就绪：${atlas.anims.size} 组动画，原生 ${atlas.width}x${atlas.height}，` +
@@ -224,20 +235,25 @@ function visualAnchor(): { x: number; y: number } {
 
 /** the sprite sits bottom-centre inside the window, offset by the transparent pad */
 function layoutCanvas(): void {
+  // The canvas covers the WHOLE window, including its transparent pad. Drawing
+  // applies the pad once, and the coordinate conversions subtract that same
+  // pad. Previously the canvas was sprite-sized and shifted by `pad` in CSS,
+  // while draw() also translated by `pad`: the sprite was offset twice and its
+  // right/bottom edge was clipped by the smaller canvas.
   const dpr = window.devicePixelRatio || 1;
-  canvas.width = Math.max(1, Math.round(pet.spriteW * dpr));
-  canvas.height = Math.max(1, Math.round(pet.spriteH * dpr));
-  canvas.style.width = `${pet.spriteW}px`;
-  canvas.style.height = `${pet.spriteH}px`;
-  canvas.style.left = `${pad}px`;
-  canvas.style.top = `${pad}px`;
+  const cssW = pet.spriteW + pad * 2;
+  const cssH = pet.spriteH + pad * 2;
+  canvas.width = Math.max(1, Math.round(cssW * dpr));
+  canvas.height = Math.max(1, Math.round(cssH * dpr));
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  canvas.style.left = '0';
+  canvas.style.top = '0';
   ctx.imageSmoothingEnabled = false;
 }
 
 function applyScale(): void {
   layoutCanvas();
-  canvas.style.left = `${pad}px`;
-  canvas.style.top = `${pad}px`;
 }
 
 // ---------------------------------------------------------------------------
@@ -251,7 +267,10 @@ function scheduleIdleLife(): void {
   setTimeout(() => {
     // an idle blink must not interrupt a held pose (the cat being carried):
     // playTransient() also refuses, this just avoids the pointless call
-    if (!cfg.paused && !anim.isTransient) anim.playTransient('blink');
+    if (!cfg.paused && !anim.isTransient) {
+      anim.playTransient('blink');
+      wakeLoop();
+    }
     scheduleIdleLife();
   }, blinkIn);
 }
@@ -263,7 +282,11 @@ function updateBaseAnim(): void {
   // never fight an in-flight reaction (drag/pat/land); the animator hands
   // control back on its own when the transient finishes
   if (anim.isTransient) return;
-  if (pet.mode === 'roam' || (pet.mode === 'follow' && performance.now() - lastPointerMove < TUNING.mouseIdleMs)) {
+  // Walk only while the controller is ACTUALLY walking. Mode is not movement:
+  // roam rests between destinations and follow stops on arrival. The old
+  // mode-based test left the cat walking in place during both pauses.
+  if (pet.isMoving) {
+    breathing = false;
     anim.setBase('walk');
     return;
   }
@@ -289,11 +312,17 @@ function wireIpc(): void {
       maskKey = '';                 // sprite size changed: rebuild the hit mask
       window.pet.requestFrame();    // main resizes the window, then sends it back
     }
+    // A pause still needs one last frame so the frozen pose reflects the new
+    // config; an unpause must wake the loop that was stopped.
+    wakeLoop(next.paused);
     // Pausing deliberately does NOT change the pose or add any badge: the pet
     // simply freezes on whatever frame it is showing.
   });
 
-  window.pet.onFrame((info) => applyFrame(info));
+  window.pet.onFrame((info) => {
+    applyFrame(info);
+    wakeLoop(true);
+  });
 
   /**
    * The main process moved the window (the pet walked, was dragged, or bounced).
@@ -305,13 +334,12 @@ function wireIpc(): void {
   window.pet.onWindowMoved((origin) => {
     windowMovedCount++;
     lastWindowMoved = { ...origin };
-    const moved = origin.x !== windowRect.x || origin.y !== windowRect.y;
+    // This is the ACTUAL origin, not an optimistic target. Drawing must use it:
+    // painting at a target the native window has not reached yet clips the cat
+    // at the window edge for one frame, which reads as a twitch. Pointer input
+    // no longer depends on this cache (it uses screenX/screenY), so waiting for
+    // the real echo cannot break dragging.
     windowRect = { ...windowRect, x: origin.x, y: origin.y };
-    if (moved) {
-      // the window moved under the pointer: the caret is no longer where the
-      // drag thinks it is, so rebase the grab against the last known cursor
-      if (dragging) dragOffset = { x: pointer.x - pet.visualX, y: pointer.y - pet.visualY };
-    }
   });
 
   /**
@@ -325,6 +353,9 @@ function wireIpc(): void {
     haveCursor = true;
     lastCursorSeen = performance.now();
     lastPointerMove = lastCursorSeen;
+    // The loop drops to the animation's own frame rate while the cat rests. A
+    // moving cursor is new work, so pull the next update forward immediately.
+    if (cfg.mode === 'follow') wakeLoop();
   });
 
   /**
@@ -340,11 +371,13 @@ function wireIpc(): void {
     pet.facing = -1;              // face inwards, away from the screen edge
     reportPosition(true);
     persistPosition(true);
+    wakeLoop(true);
   });
 
   window.pet.onPat(() => {
     lastInteraction = performance.now();
     pet.pat();
+    wakeLoop();
   });
 }
 
@@ -354,37 +387,24 @@ let lastReported = { x: NaN, y: NaN };
 /**
  * Tell main where the pet's feet are, so it can move the window to match.
  *
- * Dead-zone following: while the pet stays within the middle of the window the
- * window does not move at all, and only when the pet nears an edge is the window
- * re-centred (which keeps the pet visually still on screen).
+ * While the pet is actually moving the window must follow EVERY frame. Applying
+ * the stationary 120ms throttle here made fast roam advance the native window
+ * in 30px batches roughly eight times per second, which is visible as a stutter
+ * even though the sprite itself moved at 60fps.
  *
- * This is not an optimisation -- it is what stops the pet from twitching.
- * Repositioning the window while the pointer is over it makes Windows deliver
- * fresh mouse-move messages for a cursor that never actually moved, and while
- * dragging that feeds the window's own motion back into the drag. Keeping the
- * window still during small motions removes the loop entirely.
+ * The dead zone remains for a pet that is standing still: the window then stays
+ * put instead of chasing sub-pixel breathing/rounding changes. It no longer
+ * risks input feedback because pointer input uses absolute screenX/screenY.
  */
-// The window is only 2*pad (12px at 3x) larger than the sprite, so the dead zone
-// must stay well inside the pad. At 9% of the sprite (~20px) the cat was drawn
-// past the window edge and clipped before the window caught up; at 2% it stays
-// inside with room to spare.
 const FOLLOW_FRACTION = 0.02;
-/**
- * Minimum gap between window re-centres. Moving the window under a stationary
- * cursor makes Windows synthesise mouse-move messages, and while dragging that
- * feeds the window's own motion back into the drag; throttling bounds how often
- * that can happen, and a wider dead zone means the pet can walk a good distance
- * inside the window before it needs to move at all.
- */
+/** Minimum gap between recentres while the pet is stationary. */
 const REPORT_INTERVAL_MS = 120;
 let lastReportAt = 0;
 
 function reportPosition(force = false): void {
   const visual = visualAnchor();
-  // A DRAG must follow every frame. With the dead zone and the 120ms throttle
-  // applied, the window lagged up to 120ms behind the pointer, which is exactly
-  // what "the cat cannot keep up with the mouse" felt like.
-  if (!force && !dragging) {
+  const inMotion = dragging || pet.isMoving || pet.chasing || !pet.onGround;
+  if (!force && !inMotion) {
     if (!Number.isNaN(lastReported.x)) {
       const limitX = pet.spriteW * FOLLOW_FRACTION;
       const limitY = pet.spriteH * FOLLOW_FRACTION;
@@ -396,6 +416,8 @@ function reportPosition(force = false): void {
   }
   lastReportAt = performance.now();
   lastReported = { x: visual.x, y: visual.y };
+  // Do not advance windowRect optimistically. The native echo is what draw()
+  // can trust; painting ahead of the real window clips the sprite.
   window.pet.setPos({ x: Math.round(visual.x), y: Math.round(visual.y) });
 }
 
@@ -451,6 +473,12 @@ function beginDrag(x: number, y: number): boolean {
     try { canvas.setPointerCapture(pointerId); } catch { /* capture is a bonus */ }
   }
   canvas.style.cursor = 'grabbing';
+  // beginDrag is also driven directly by the automated hook, which produces no
+  // pointerdown. Waking here makes the loop active for every drag source, and
+  // syncing the window now means the first pointermove starts from an aligned
+  // frame even if the idle scheduler was between ticks.
+  reportPosition(true);
+  wakeLoop();
   return true;
 }
 
@@ -473,6 +501,10 @@ function finishDrag(): void {
   pointerId = null;
   canvas.style.cursor = 'grab';
   pet.endDrag();
+  // Send the final position immediately. The scheduler may have been idle when
+  // a hook-driven drag happened, and waiting for its next tick left the native
+  // window hundreds of pixels behind the dropped cat.
+  reportPosition(true);
   // the drop position is the pet's visual position; persisting the internal
   // ground-line value used to restore the cat to the wrong place
   persistPosition();
@@ -490,19 +522,28 @@ function finishDrag(): void {
  * convert: screen -> window-local -> sprite-local.
  */
 function hitTest(x: number, y: number): boolean {
-  // x,y are SCREEN coordinates; compare against the sprite's visual position
-  const visual = visualAnchor();
-  const spriteLeft = visual.x - pet.spriteW / 2;
-  const spriteTop = visual.y - pet.spriteH;
-  const sx = x - spriteLeft + pad;
-  const sy = y - spriteTop + pad;
+  // x,y are SCREEN coordinates. Build the exact rendered footprint (including
+  // breath and landing squash), then inverse-map the point into the sprite's
+  // unscaled pixel space where the cached mask lives. There is no window pad in
+  // this conversion: the pad is applied once by draw(), not to the artwork.
+  const metrics = renderMetrics();
+  if (
+    x < metrics.left ||
+    x > metrics.left + metrics.drawW ||
+    y < metrics.top ||
+    y > metrics.top + metrics.drawH
+  ) {
+    return false;
+  }
+  const sx = ((x - metrics.left) / metrics.drawW) * pet.spriteW;
+  const sy = ((y - metrics.top) / metrics.drawH) * pet.spriteH;
   if (spriteMask) {
     const cx = Math.floor(sx / MASK_CELL);
     const cy = Math.floor(sy / MASK_CELL);
     if (cx < 0 || cy < 0 || cx >= maskW || cy >= maskH) return false;
     return spriteMask[cy * maskW + cx] === 1;
   }
-  return sx >= 0 && sx <= pet.spriteW && sy >= 0 && sy <= pet.spriteH;
+  return true;
 }
 
 function installTestHook(): void {
@@ -550,30 +591,43 @@ function installTestHook(): void {
 function wireInput(): void {
   canvas.style.cursor = 'grab';
 
-  // every handler converts the window-relative pointer into SCREEN coordinates,
-  // because the window moves to follow the pet while the pointer stays put
-  const screenPos = (e: PointerEvent | MouseEvent) => ({
-    x: e.clientX + windowRect.x,
-    y: e.clientY + windowRect.y,
-  });
+  // Use the event's absolute screen coordinates. clientX/clientY are relative
+  // to a window that is itself moving under the pointer; during a fast drag
+  // Windows synthesises new client coordinates for a stationary cursor, which
+  // fed the window's own motion back into dragTo() and made the pet oscillate.
+  // screenX/screenY are invariant while the window moves.
+  const screenPos = (e: PointerEvent | MouseEvent) => ({ x: e.screenX, y: e.screenY });
 
   window.addEventListener('pointerdown', (e) => {
+    if (testMode && e.isTrusted) return;
     inputStats.down++;
     if (e.button !== 0) return;
     const p = screenPos(e);
+    pointer = p;
+    lastPointerMove = performance.now();
     pointerId = e.pointerId;
-    if (beginDrag(p.x, p.y)) e.preventDefault();
+    if (beginDrag(p.x, p.y)) {
+      wakeLoop();
+      e.preventDefault();
+    }
   });
 
   window.addEventListener('pointermove', (e) => {
+    if (testMode && e.isTrusted) return;
     inputStats.move++;
     const p = screenPos(e);
+    const changed = p.x !== pointer.x || p.y !== pointer.y;
     pointer = p;
     lastPointerMove = performance.now();
-    updateDrag(p.x, p.y);
+    // Windows synthesises pointermove events when the window moves underneath
+    // a stationary cursor. They carry a new clientX/clientY but the SAME
+    // screenX/screenY. Ignoring them prevents both drag feedback and endless
+    // refresh of the lost-pointer watchdog while the cat is moving.
+    if (dragging && changed) updateDrag(p.x, p.y);
   });
 
   window.addEventListener('pointerup', (e) => {
+    if (testMode && e.isTrusted) return;
     inputStats.up++;
     if (!dragging) return;
     finishDrag();
@@ -584,19 +638,23 @@ function wireInput(): void {
   // window (easy: the window is only the size of the cat) delivered no pointerup
   // here at all, and `dragging` stayed true forever -- after that the pet ignored
   // every click. These three listeners end the drag in each loss case.
-  window.addEventListener('pointercancel', () => {
+  window.addEventListener('pointercancel', (e) => {
+    if (testMode && e.isTrusted) return;
     inputStats.cancel++;
     if (dragging) finishDrag();
   });
   window.addEventListener('blur', () => {
+    if (testMode) return;
     if (dragging) finishDrag();
   });
   document.addEventListener('mouseleave', () => {
+    if (testMode) return;
     // the button is no longer down: a drag that produced no events has died
     if (dragging && (performance.now() - lastDragAt > 400)) finishDrag();
   });
 
   window.addEventListener('dblclick', (e) => {
+    if (testMode && e.isTrusted) return;
     if (cfg.paused) return;
     const p = screenPos(e);
     if (!hitTest(p.x, p.y)) return;
@@ -613,7 +671,10 @@ function wireInput(): void {
   window.addEventListener('dragstart', (e) => e.preventDefault());
   window.addEventListener('wheel', (e) => e.preventDefault(), { passive: false });
   window.addEventListener('resize', () => {
-    void window.pet.ready().then((f) => applyFrame(f));
+    void window.pet.ready().then((f) => {
+      applyFrame(f);
+      wakeLoop(true);
+    });
   });
 }
 
@@ -622,13 +683,77 @@ function wireInput(): void {
 // ---------------------------------------------------------------------------
 
 let last = performance.now();
-let diagDue = 250;
+let nextDiagAt = 250;
 let diagFrames = 0;
 /** dirty flag for draw(): everything draw() consumes, keyed; '' forces a draw */
 let lastDrawKey = '';
 
+// ---------------------------------------------------------------------------
+// frame scheduler
+//
+// A display-refresh loop running forever costs CPU even when draw() is clean,
+// and on a 165Hz screen it also moves the native window far more often than the
+// eye or the animation needs. Motion is capped at 60Hz, a sitting cat runs at
+// its 2.2fps animation rate, and a paused cat stops completely. Input/IPC paths
+// call wakeLoop() when new work arrives.
+// ---------------------------------------------------------------------------
+
+const MOTION_FRAME_MS = 1000 / 60;
+let frameTimer: number | null = null;
+let frameDueAt = 0;
+
+function scheduleFrame(delayMs: number): void {
+  if (frameTimer !== null) return;
+  frameDueAt = performance.now() + delayMs;
+  frameTimer = window.setTimeout(() => {
+    frameTimer = null;
+    frameDueAt = 0;
+    // Timer-driven rather than rAF-driven on purpose. rAF follows the display
+    // refresh (165Hz here), so moving the native window on every callback sent
+    // ~170 IPC position updates per second and starved the main process. 60Hz
+    // is both the authored animation rate and enough for smooth motion.
+    loop(performance.now());
+  }, Math.max(0, delayMs));
+}
+
+/** Bring the next update forward; force=true also runs one frame while paused. */
+function wakeLoop(force = false): void {
+  if (!cfg) return;
+  if (cfg.paused && !force) return;
+  if (frameTimer !== null) {
+    if (frameDueAt - performance.now() < 6) return; // a frame is already imminent
+    window.clearTimeout(frameTimer);
+    frameTimer = null;
+    frameDueAt = 0;
+  }
+  // Time spent stopped must not arrive as one giant animation step.
+  last = performance.now();
+  scheduleFrame(0);
+}
+
+function scheduleNextFrame(probeAttached: boolean): void {
+  if (!cfg || cfg.paused) return;
+  const moving =
+    dragging ||
+    pet.isMoving ||
+    pet.chasing ||
+    !pet.onGround ||
+    pet.squashFactor > 0.001;
+  if (moving || probeAttached) {
+    scheduleFrame(MOTION_FRAME_MS);
+    return;
+  }
+  // A blink or pat is an animation-only change: run it at its authored frame
+  // rate instead of repainting the whole motion loop for a 3–8fps sequence.
+  const fps = Math.max(0.5, anim.active().fps);
+  scheduleFrame(Math.min(750, Math.max(32, 1000 / fps)));
+}
+
 function loop(now: number): void {
-  const dt = Math.min(0.05, (now - last) / 1000);
+  // Physics is clamped so a stall cannot teleport the cat; animation uses the
+  // real elapsed time so lowering the idle tick rate does not slow it down.
+  const rawDt = Math.min(1, Math.max(0, (now - last) / 1000));
+  const dt = Math.min(0.05, rawDt);
   last = now;
 
   // A drag whose pointer events have stopped arriving (button released outside
@@ -677,7 +802,7 @@ function loop(now: number): void {
     });
     if (trace.length > 400) trace.shift();
   }
-  anim.update(dt, cfg.paused);          // frozen while paused, so the frame holds
+  anim.update(rawDt, cfg.paused);       // frozen while paused, so the frame holds
   noteAnimTransition();
 
   const local = localAnchor();
@@ -711,12 +836,14 @@ function loop(now: number): void {
   // publish continuously while a probe is attached, so a frozen snapshot means
   // the loop really stopped rather than "we only sampled once"
   const probeAttached = (window as unknown as { __petTrace?: boolean }).__petTrace === true;
-  if (probeAttached || (diagDue && now > diagDue)) {
-    diagDue = 0;
+  if (probeAttached || now >= nextDiagAt) {
+    // Keep the snapshot reasonably fresh. It used to be published once and
+    // then never again, which made any later probe read a boot-time snapshot.
+    nextDiagAt = now + 250;
     diagFrames++;
     publishDiagnostics();
   }
-  requestAnimationFrame(loop);
+  scheduleNextFrame(probeAttached);
 }
 
 // ---------------------------------------------------------------------------
@@ -776,9 +903,27 @@ function buildMask(img: HTMLImageElement, flip: boolean): void {
   inputStats.maskCell = `${maskW}x${maskH}`;
 }
 
+/**
+ * The exact on-screen footprint of the current frame, in screen coordinates.
+ * Draw and hitTest both consume this, so a change to breath/squash can never
+ * make the clickable cat drift away from the drawn one.
+ */
+function renderMetrics(): { drawW: number; drawH: number; left: number; top: number } {
+  const breath = breathing ? 1 : 0;
+  const squash = pet.squashFactor;
+  // Both effects are anchored at the feet, so they change size but not the
+  // bottom-centre position. Breathing is intentionally only a few thousandths.
+  const drawW = pet.spriteW * (1 - breath * 0.004) * (1 + squash * 0.18);
+  const drawH = pet.spriteH * (1 - breath * 0.012) * (1 - squash * 0.32);
+  return {
+    drawW,
+    drawH,
+    left: pet.visualX - drawW / 2,
+    top: pet.visualY - drawH,
+  };
+}
+
 function draw(frame: HTMLImageElement): void {
-  const w = pet.spriteW;
-  const h = pet.spriteH;
   const dpr = window.devicePixelRatio || 1;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
   // clear the whole backing store, in CSS pixels: canvas.width / dpr. Clearing
@@ -786,34 +931,22 @@ function draw(frame: HTMLImageElement): void {
   // and on a scaled display it would wipe the wrong area.
   ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
 
-  // Breathing is a tiny scale about the feet, NOT a translation of the artwork.
-  // The pose frames deliberately no longer move the body: a one-pixel breath
-  // used to shift the whole cat a few pixels, which made the idle cycle flip
-  // between visibly different images and read as the pet juddering in place.
-  const breath = breathing ? 1 : 0;
-  const squash = pet.squashFactor;
+  const metrics = renderMetrics();
 
   ctx.save();
   ctx.scale(dpr, dpr);
   ctx.imageSmoothingEnabled = false;
 
-  // place the sprite inside the padded window: bottom-centre plus the pad
-  ctx.translate(pad, pad);
-  // breathe about the feet so the cat stays planted
-  ctx.translate(0, h);
-  ctx.scale(1 - breath * 0.004, 1 - breath * 0.012);
-  ctx.translate(0, -h);
-
+  // Bottom-centre of the sprite in WINDOW-LOCAL coordinates. Use the live
+  // anchor rather than pad+w/2: while the window follows the pet it can lag by
+  // the dead-zone amount, and drawing at a fixed spot would then put the pixels
+  // a few px away from the screen position hitTest uses.
+  const local = localAnchor();
+  ctx.translate(local.x, local.y);
   // facing: mirror around the sprite's own centre. The artwork faces LEFT, so
   // facing RIGHT (facing > 0) is the mirrored case.
-  ctx.translate(w / 2, 0);
   if (pet.facing > 0) ctx.scale(-1, 1);
-  ctx.translate(-w / 2, 0);
-
-  // squash pivots on the feet so the cat never leaves the ground
-  const drawH = h * (1 - squash * 0.32);
-  const drawW = w * (1 + squash * 0.18);
-  ctx.drawImage(frame, (w - drawW) / 2, h - drawH, drawW, drawH);
+  ctx.drawImage(frame, -metrics.drawW / 2, -metrics.drawH, metrics.drawW, metrics.drawH);
   ctx.restore();
 }
 

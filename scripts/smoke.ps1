@@ -15,15 +15,26 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+# The host tooling may launch this script with Electron forced into Node mode
+# (ELECTRON_RUN_AS_NODE=1) and with an injected NODE_OPTIONS preload. Both make
+# electron.exe exit before app.whenReady; the app test must start a real runtime.
+$env:ELECTRON_RUN_AS_NODE = $null
+$env:NODE_OPTIONS = $null
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $log = Join-Path (Resolve-Path $LogDir) 'boot.log'
 Remove-Item $log -Force -ErrorAction SilentlyContinue
+$userData = Join-Path (Resolve-Path $LogDir) 'userdata-smoke'
+Remove-Item $userData -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $userData | Out-Null
 
 $env:PET_LOG = $log
 $env:PET_SMOKE_MS = "$($Seconds * 1000)"
+# Keep the test away from the user's real config, and make the single-instance
+# lock independent from a running copy of the pet.
+$env:PET_USER_DATA_DIR = $userData
 
 if ($Exe) {
   if (-not (Test-Path -LiteralPath $Exe)) { throw "exe not found: $Exe" }

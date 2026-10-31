@@ -14,6 +14,8 @@ export interface FrameInfo {
   workArea: Rect;
   pad: number;
   version: string;
+  /** true only for automated runs; enables the renderer's introspection hook */
+  testMode: boolean;
 }
 
 export interface PetBridge {

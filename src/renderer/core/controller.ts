@@ -86,9 +86,12 @@ export class PetController {
 
   /** current squash amount, 0..1, decaying after a landing */
   private squash = 0;
+  /** squash at the moment of impact; `squash` is derived from this each frame */
+  private squashPeak = 0;
   private squashLeft = 0;
-  private dragDx = 0;
-  private lastDx = 0;
+  /** recent horizontal drag speed in px/s, used for throw momentum */
+  private dragVx = 0;
+  private dragSampleAt = 0;
   private wasDragging = false;
 
   /** current wander destination (roam mode), in world coordinates */
@@ -171,6 +174,20 @@ export class PetController {
     return this.squash;
   }
 
+  /**
+   * True only while a behaviour mode is actually walking.
+   *
+   * The renderer must not infer this from the mode: roam spends most of its
+   * time resting between destinations and follow stops once it reaches the
+   * cursor. Deriving the walk animation from those modes made the cat play its
+   * walk cycle while standing still.
+   */
+  get isMoving(): boolean {
+    if (this.mode === 'follow') return this.chasing;
+    if (this.mode === 'roam') return this.roamTarget !== null;
+    return false;
+  }
+
   /** live wander state, published in diagnostics so roam can be inspected */
   get wanderDebug(): Record<string, unknown> {
     return {
@@ -223,6 +240,8 @@ export class PetController {
   startDrag(): void {
     this.vx = 0;
     this.vy = 0;
+    this.dragVx = 0;
+    this.dragSampleAt = performance.now();
     this.chasing = false;
     this.roamTarget = null;
     // Held for as long as the drag lasts: as a transient the pose expired after
@@ -242,18 +261,34 @@ export class PetController {
     // face the way the cat is being pulled: dragging right must not leave it
     // looking left (the movement modes set facing from their own direction, but
     // a drag bypasses all of them)
+    const prevX = this.x;
     const moved = x - this.x;
     if (Math.abs(moved) > 1.5) this.facing = moved > 0 ? 1 : -1;
     this.x = clamp(x, this.area.x + this.spriteW / 2, this.area.x + this.area.width - this.spriteW / 2);
     this.y = clamp(y, this.area.y + this.spriteH, this.groundY);
     this.onGround = this.y >= this.groundY - 0.5;
+
+    // Measure throw speed in px/s from pointer timestamps, not per-frame
+    // pixels. A per-frame delta made the same gesture throw the cat several
+    // times farther on a 144Hz display than on 60Hz. Use the distance the pet
+    // actually moved after clamping, so pushing against a screen edge does not
+    // accumulate a huge fake velocity.
+    const now = performance.now();
+    const elapsed = (now - this.dragSampleAt) / 1000;
+    if (elapsed >= 0.004) {
+      const instant = (this.x - prevX) / elapsed;
+      this.dragVx = this.dragVx * 0.6 + instant * 0.4;
+    }
+    this.dragSampleAt = now;
   }
 
   endDrag(): void {
     // put the cat down: hand the animation back before gravity takes over
     this.anim.releaseOverride();
-    // release momentum from the last drag delta, then fall to the ground
-    this.vx = clamp(this.lastDx * 18, -900, 900);
+    // Only recent motion becomes momentum. If the pointer sat still before
+    // release, the cat should simply drop instead of inheriting an old throw.
+    const stale = performance.now() - this.dragSampleAt > 90;
+    this.vx = stale ? 0 : clamp(this.dragVx, -900, 900);
     this.vy = 0;
     this.onGround = this.y >= this.groundY - 0.5;
   }
@@ -277,12 +312,10 @@ export class PetController {
   ): void {
     // a preset change takes effect on the next frame; nothing else to rewire
     this.roamSpeed = opts.roamSpeed;
-    const prevX = this.x;
 
     if (!this.paused) {
       if (opts.dragging) {
         // position is driven by dragTo()
-        this.dragDx = this.x - prevX;
       } else {
         // a drag that just ended leaves the pet in the air: gravity takes it
         if (this.wasDragging) this.onGround = this.y >= this.groundY - 0.5;
@@ -306,14 +339,14 @@ export class PetController {
       }
 
       if (this.squashLeft > 0) {
-        this.squashLeft -= dt;
-        this.squash = Math.max(0, this.squash * (this.squashLeft / (TUNING.squashMs / 1000)));
+        this.squashLeft = Math.max(0, this.squashLeft - dt);
+        // Linear recovery from the stored impact value. Multiplying the current
+        // value every frame made the recovery curve depend on refresh rate.
+        this.squash = this.squashPeak * (this.squashLeft / (TUNING.squashMs / 1000));
       }
     }
 
     this.wasDragging = opts.dragging;
-    this.lastDx = this.dragDx;
-    this.dragDx = 0;
   }
 
   // -- movement modes ----------------------------------------------------
@@ -442,7 +475,9 @@ export class PetController {
     this.vy = Math.min(TUNING.maxFall, this.vy + TUNING.gravity * dt);
     this.y += this.vy * dt;
     this.x += this.vx * dt;
-    this.vx *= 0.995;
+    // Exponential damping expressed per second, so the same throw travels the
+    // same distance regardless of the display refresh rate.
+    this.vx *= Math.pow(0.995, dt * 60);
     if (this.y >= this.groundY && this.vy > 0) this.land(this.vy);
   }
 
@@ -452,7 +487,8 @@ export class PetController {
     this.onGround = true;
     const speed = Math.abs(impact);
     if (speed > 260) {
-      this.squash = clamp(speed / 2600, 0.12, 0.5);
+      this.squashPeak = clamp(speed / 2600, 0.12, 0.5);
+      this.squash = this.squashPeak;
       this.squashLeft = TUNING.squashMs / 1000;
       this.anim.setBase('sit');
       // NOTE: there is no `land` frame set -- playTransient('land') was a silent
