@@ -202,7 +202,12 @@ foreach ($case in $cases) {
   $text = if (Test-Path $log) { Get-Content $log -Raw -Encoding UTF8 } else { '' }
   $m = [regex]::Match($text, '\[smoke\] renderer ready: (\{.*\})')
   if (-not $m.Success) {
-    Write-Host ("FAIL  {0,-18} renderer never reported ready" -f $case.name)
+    Write-Host ("FAIL  {0,-18} renderer never reported ready | exit={1} logExists={2}" -f $case.name, $proc.ExitCode, (Test-Path $log))
+    if (Test-Path -LiteralPath $log) {
+      Write-Host "--- $($case.name) detailed log ---"
+      Get-Content -LiteralPath $log -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+      Write-Host "--- end $($case.name) log ---"
+    }
     $failures++
     continue
   }

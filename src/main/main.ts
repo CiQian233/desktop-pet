@@ -992,6 +992,12 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
   // by much more (or in the opposite direction) than the pointer did.
   if (TEST_PROBE === 'dragpath') {
     const spriteH = SPRITE_NATIVE.h * store.all().scale;
+    // Hosted Windows runners can have a 1024x720 (or smaller) work area. The
+    // old hard-coded 1280,900 setup clamped the cat to the right edge, so the
+    // measured rightward drag correctly stayed clamped and the probe failed.
+    const area = activeArea();
+    const targetX = area.x + Math.round(area.width / 2);
+    const targetY = area.y + Math.round(area.height / 2);
     const res = (await js(`(() => {
       const t = window.__petTest;
       if (!t) return null;
@@ -1002,8 +1008,8 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       // requires a real drag, because updateDrag() is a no-op unless a drag is
       // in progress.
       t.beginDrag(t.info().pet.x, t.info().pet.y - halfH);
-      const placed = t.hitTest(1280, 900 - halfH);
-      t.updateDrag(1280, 900);
+      const placed = t.hitTest(${targetX}, ${targetY} - halfH);
+      t.updateDrag(${targetX}, ${targetY});
       t.finishDrag();
       const info0 = t.info();
       const startX = info0.pet.x;
@@ -1279,7 +1285,7 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       // drag 1: pull it left, well clear of the right-hand clamp (a +150px leg
       // would otherwise hit the wall at 2446 and be clamped)
       t.beginDrag(x0.x, x0.y - P.halfH);
-      t.updateDrag(x0.x - 600, x0.y);
+      t.updateDrag(P.area.x + Math.round(P.area.width / 2), x0.y);
       t.finishDrag();
       await frame();
       // drag 2: grab it again and raise it to the middle of the legal band
@@ -2401,7 +2407,11 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
 // lifecycle
 // ---------------------------------------------------------------------------
 
-const gotLock = app.requestSingleInstanceLock();
+// Every smoke case owns an isolated userData directory. Bypass the production
+// singleton for those short-lived probes: hosted runners can serialize process
+// teardown unpredictably, and a previous test instance must never suppress the
+// next one's boot log. Normal launches retain the single-instance behaviour.
+const gotLock = SMOKE_MS > 0 || app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
