@@ -51,7 +51,8 @@ jobs:
         run: npm ci --ignore-scripts
 
       - name: Install Electron runtime
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/electron-install.ps1
+        timeout-minutes: 5
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/electron-install.ps1 -UseOfficialMirror
 
       # Fail fast, BEFORE the multi-minute packaging step. The text guard's
       # negative self-test runs first (a guard that cannot catch damage is

@@ -882,7 +882,7 @@ Release 已上传四个最终附件：portable exe、setup exe、setup blockmap 
 
 **④ 发布方式**：源码与公开日志推送 `main` 后，以同一提交创建 v0.4.0 tag 和 GitHub Release，直接上传上述本地已验收 exe、blockmap 与 SHA256SUMS，避免再推送 tag 触发 CI 重复构建和重复发布。发布地址为 `https://github.com/CiQian233/desktop-pet/releases/tag/v0.4.0`，上传后需逐项核对远端附件大小和 SHA-256。
 
-**⑤ 云端工作流复核**：首次 main CI 在 Smoke test 前停止，日志为 `electron runtime missing`，同时发现 CI 仍使用 Node 20；构建、文本守卫和配置单测均已通过，并非应用行为用例失败。随后将 CI 与 Release 工作流统一为 Node 22、`npm ci --ignore-scripts` 和显式 `scripts/electron-install.ps1`，确保后续云端冒烟、矩阵和打包都有 Electron 运行时。
+**⑤ 云端工作流复核**：首次 main CI 在 Smoke test 前停止，日志为 `electron runtime missing`，同时发现 CI 仍使用 Node 20；构建、文本守卫和配置单测均已通过，并非应用行为用例失败。随后将 CI 与 Release 工作流统一为 Node 22、`npm ci --ignore-scripts` 和显式 `scripts/electron-install.ps1`，确保后续云端冒烟、矩阵和打包都有 Electron 运行时。镜像下载在云端长时间无进展后，安装脚本新增 `-UseOfficialMirror`；CI 与 Release 改为直接使用 Electron 官方 GitHub 发布源并设 5 分钟超时，本机默认镜像不变。
 
 真实双屏热插拔、混合 DPI 与真实拔电/锁屏/休眠仍保留为硬件人工验收项，不由本轮自动测试替代。
 

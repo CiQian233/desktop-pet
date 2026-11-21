@@ -3,11 +3,14 @@
 # Needed because a plain `npm install` can fail here: the sandbox in some
 # environments denies the spawned postinstall process (EPERM), and the user-level
 # cache at %LOCALAPPDATA%\electron may not be writable. This script fetches into
-# the project-local cache using the npmmirror binary mirror.
+# the project-local cache using the npmmirror binary mirror by default. CI can
+# pass -UseOfficialMirror to download directly from Electron's GitHub releases.
 #
 #   powershell -File scripts/electron-install.ps1
 #
 # ASCII-only on purpose (Windows PowerShell 5.1 reads .ps1 as ANSI).
+
+param([switch]$UseOfficialMirror)
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -17,7 +20,12 @@ $electronDir = Join-Path $root 'node_modules\electron'
 if (-not (Test-Path $electronDir)) { throw 'node_modules\electron missing -- run: npm install' }
 
 $env:electron_config_cache = Join-Path $root '.electron-cache'
-$env:ELECTRON_MIRROR = 'https://registry.npmmirror.com/-/binary/electron/'
+if ($UseOfficialMirror) {
+  $env:ELECTRON_MIRROR = $null
+  Write-Host 'using the official Electron release source'
+} else {
+  $env:ELECTRON_MIRROR = 'https://registry.npmmirror.com/-/binary/electron/'
+}
 
 $version = (Get-Content (Join-Path $electronDir 'package.json') -Raw | ConvertFrom-Json).version
 Write-Host "electron package version: $version"
