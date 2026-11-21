@@ -225,7 +225,10 @@ async function boot(): Promise<void> {
   scheduleIdleLife();
   reportPosition(true);
 
-  scheduleFrame(0);
+  // Produce the first pixels and diagnostics synchronously. On an occluded or
+  // hosted Windows desktop the initial zero-delay timer can be dropped; with an
+  // initially paused config there would be no later tick to recover readiness.
+  loop(performance.now());
 
   console.log(
     `[pet] 就绪：${atlas.anims.size} 组动画，原生 ${atlas.width}x${atlas.height}，` +
