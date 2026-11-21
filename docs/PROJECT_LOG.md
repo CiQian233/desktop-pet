@@ -808,15 +808,17 @@ pet.restore(home.x - windowRect.x, home.y - windowRect.y, 1);   // 错
 
 用户确认本次功能任务完成，明确授权构建 v0.3.2 完整安装包与点击即用便携版、更新项目日志并上传 GitHub。既有发布形式已核对：GitHub Release 提供 portable exe、NSIS setup exe、setup blockmap 和 SHA-256 校验文件。
 
-**① 本地构建**：执行 `scripts/pack.ps1 -Target all`，旧版本全部保留。生成 `dist/portable/CalicoPet-portable-0.3.2.exe`（74,250,244 字节，70.81 MiB）与 `dist/installer/CalicoPet-setup-0.3.2.exe`（81,753,151 字节，77.97 MiB），以及 `CalicoPet-setup-0.3.2.exe.blockmap`（85,665 字节）。构建结束已恢复原始 7za；两个 exe 均为 **NotSigned**，与既有版本一致，不使用自签名冒充受信任发布者。
+**① 本地构建**：执行 `scripts/pack.ps1 -Target all`，旧版本全部保留。生成 `dist/portable/CalicoPet-portable-0.3.2.exe`（74,251,490 字节，70.81 MiB）与 `dist/installer/CalicoPet-setup-0.3.2.exe`（81,753,403 字节，77.97 MiB），以及 `CalicoPet-setup-0.3.2.exe.blockmap`（85,724 字节）。构建结束已恢复原始 7za；两个 exe 均为 **NotSigned**，与既有版本一致，不使用自签名冒充受信任发布者。
 
 **② 发布前验收**：开发版配置单测 **4/4**、行为矩阵 **31/31**；便携版针对最终 exe 再跑完整矩阵，**31/31 全部通过**，包含双姿态真实画布逐像素审计。安装包在没有既有 CalicoPet 安装的前提下，使用独立测试目录完成 **静默安装 → 8 秒启动冒烟 → 静默卸载**，卸载退出码 0 且安装的可执行文件已移除。测试用户目录与正常配置隔离。
 
-**③ 校验文件**：`dist/release/SHA256SUMS-v0.3.2.txt` 已生成。便携版 SHA-256 为 `06a1a709882014ce770a01642ff1e2716d97523b01c654a144e0d807ba165374`；安装包为 `95527bc6cf603fb4f1d2c7dd02dd1806f490f4dc7c3c6614d2896d36b5393d6f`。README、PLAN、更新日志和本日志已同步最终产物与验收结果。
+**③ 校验文件**：`dist/release/SHA256SUMS-v0.3.2.txt` 已生成。便携版 SHA-256 为 `2f226e715ab0de9c426167c7fa5cec0d19ea0159bc203b981ab11352f97c944a`；安装包为 `c8444f3578e229bdfe83fcf2d790d20cd0e8040cc4f424a41900104652a4c1a0`。README、PLAN、更新日志和本日志已同步最终产物与验收结果。
 
-**④ GitHub 发布已完成**：项目日志按用户本轮明确要求取消本地忽略并纳入版本库；私人原图、协作记忆、证书和本地构建目录仍保持忽略。功能提交 `5e08fe2` 已推送 `main`，轻量标签 `v0.3.2` 已推送；Release 地址为 `https://github.com/CiQian233/desktop-pet/releases/tag/v0.3.2`，标题为「v0.3.2 · 高 DPI 叠帧修复与稳定性优化」，正文使用 `docs/CHANGELOG_v0.3.2.md`。
+**④ GitHub 发布已完成**：项目日志按用户本轮明确要求取消本地忽略并纳入版本库；私人原图、协作记忆、证书和本地构建目录仍保持忽略。最终功能代码提交 `6060665` 已推送 `main`，本地与 GitHub Actions 完整矩阵均为 **31/31**。Release 地址为 `https://github.com/CiQian233/desktop-pet/releases/tag/v0.3.2`，标题为「v0.3.2」，正文使用 `docs/CHANGELOG_v0.3.2.md`。
 
-Release 已上传四个附件：portable exe、setup exe、setup blockmap 和 `SHA256SUMS-v0.3.2.txt`，状态均为 **uploaded**，`latest=v0.3.2`。远端摘要复核通过：便携版与安装包的 SHA-256 均与本地验收文件完全相同，大小分别为 74,250,244 和 81,753,151 字节。标签触发的重复 Release 工作流已及时取消，防止 CI 重建产物覆盖本次本地已验收并校验的附件；未取消 `main` 的 CI 验证。
+Release 已上传四个最终附件：portable exe、setup exe、setup blockmap 和 `SHA256SUMS-v0.3.2.txt`，状态均为 **uploaded**，并设为最新 Release。远端摘要复核通过：便携版与安装包的 SHA-256 均与本地验收文件完全相同，大小分别为 74,251,490 和 81,753,403 字节；blockmap 为 85,724 字节，远端 SHA-256 为 `539f03d9d1bd489d2aeb12fc1af0131570b94f79e50eebcf45ede5793ddc96d0`。标签触发的重复 Release 工作流已取消，防止 CI 重建产物覆盖本地已验收附件；未取消 `main` 的 CI 验证。
+
+**⑤ 云端 CI 修复与最终重建**：首次发布后，GitHub Runner 暴露了本地未出现的启动诊断与小工作区时序问题。修复包括：拖拽探针按 `activeArea()` 实际工作区取点；烟雾测试使用独立 userData 并绕过生产单实例锁；渲染器同步发布首帧；首份诊断立即发布、后续仍按 250ms 节流。最终功能提交 `6060665` 的云端运行 `44895889478` 为 **31/31 通过**。随后重新完整构建双产物并再次验收：最终便携版 **31/31**，最终安装包在全新隔离目录通过安装、7 组动画启动冒烟和卸载；最终附件已覆盖首次构建，Release 正文与校验文件同步更新。`v0.3.2` 标签对齐包含最终代码与公开日志的发布收尾提交。
 
 ---
 
@@ -879,7 +881,7 @@ Release 已上传四个附件：portable exe、setup exe、setup blockmap 和 `S
 | 2026-11-21 | 15 | **按三张红圈标注定点修复**：外露耳廓不再重涂深色，耳根仅保留被头部覆盖的连接暗线；胸腹删除 ≤4px 短碎外描边；33 帧审计和双姿态新增断言为 0；单测 4/4、矩阵 31/31；仍不打包 | `tools/chibi_hd.py`, `tools/pixel.py`, `art/sprites/chibi-hd/**`, `src/main/main.ts`, `docs/CHANGELOG_v0.3.2.md`, `README.md`, `PLAN.md`（详见 §4r） |
 | 2026-11-21 | 16 | **全部 33 帧统一单层连续深黑外描边**：八邻域补斜角、四邻域限定外部背景，不加内部黑点/胡须描边；双姿态外轮廓=1、外露/内部/短碎异常=0；单测 4/4、矩阵 31/31、原生命中通过；仍不打包 | `tools/pixel.py`, `tools/chibi_hd.py`, `art/sprites/chibi-hd/**`, `src/main/main.ts`, `docs/PROJECT_LOG.md`, `docs/CHANGELOG_v0.3.2.md`（详见 §4s） |
 | 2026-11-21 | 17 | **修复实际窗口叠帧**：恒等变换下改为清除完整 backing store，主画布/蒙版统一 CPU 光栅化；新增同步干净副本逐像素审计，双姿态残留/缺失/变色/总差异均为 0；单测 4/4、矩阵 31/31、原生命中通过 | `src/renderer/renderer.ts`, `src/main/main.ts`, `dist/smoke/composite-fixed-*.png`, `docs/**`（详见 §4t） |
-| 2026-11-21 | 18 | **v0.3.2 打包并发布 GitHub**：便携版 31/31、安装包安装/冒烟/卸载通过；生成 SHA-256/blockmap；源码和公开日志推送 main，Release 四附件上传且远端 exe 摘要一致 | `dist/portable/CalicoPet-portable-0.3.2.exe`, `dist/installer/CalicoPet-setup-0.3.2.exe`, `dist/release/SHA256SUMS-v0.3.2.txt`, `docs/PROJECT_LOG.md`（详见 §4u） |
+| 2026-11-21 | 18 | **v0.3.2 打包并发布 GitHub**：修复云端首帧/诊断与小工作区时序，本地及云端矩阵均 31/31；最终便携版 31/31、安装包安装/冒烟/卸载通过；生成 SHA-256/blockmap；源码和公开日志推送 main，Release 四附件覆盖上传且远端摘要一致 | `dist/portable/CalicoPet-portable-0.3.2.exe`, `dist/installer/CalicoPet-setup-0.3.2.exe`, `dist/release/SHA256SUMS-v0.3.2.txt`, `docs/PROJECT_LOG.md`（详见 §4u） |
 
 > **会话归属存疑**：会话 5 与 6 的精确切分无从考证（会话原文不可读，见 §4l），
 > 上表按内容归并；时间线与结论本身均来自 §4g–§4k 与代码实测。
