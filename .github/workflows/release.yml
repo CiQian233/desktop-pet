@@ -48,7 +48,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
+
+      - name: Install Electron runtime
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/electron-install.ps1
 
       # Fail fast, BEFORE the multi-minute packaging step. The text guard's
       # negative self-test runs first (a guard that cannot catch damage is
