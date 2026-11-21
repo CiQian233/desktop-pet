@@ -293,7 +293,18 @@ foreach ($case in $cases) {
       $diag.staleCheck.maxDriftY, $diag.staleCheck.limit
   }
   if ($ok) { Write-Host ("PASS  {0,-18} {1}" -f $case.name, $summary) }
-  else { Write-Host ("FAIL  {0,-18} {1}" -f $case.name, $summary); $failures++ }
+  else {
+    Write-Host ("FAIL  {0,-18} {1}" -f $case.name, $summary)
+    # CI otherwise keeps only this short verdict and discards the detailed boot
+    # probe with the runner. Print the failed case's own log for diagnosis; PASS
+    # output stays compact and no user configuration is involved.
+    if (Test-Path -LiteralPath $log) {
+      Write-Host "--- $($case.name) detailed log ---"
+      Get-Content -LiteralPath $log -Encoding UTF8 | ForEach-Object { Write-Host $_ }
+      Write-Host "--- end $($case.name) log ---"
+    }
+    $failures++
+  }
 }
 
 Remove-Item Env:PET_USER_DATA_DIR -ErrorAction SilentlyContinue
