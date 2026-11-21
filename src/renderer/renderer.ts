@@ -857,7 +857,9 @@ function wireInput(): void {
 // ---------------------------------------------------------------------------
 
 let last = performance.now();
-let nextDiagAt = 250;
+// Publish on the synchronous boot frame, including when boot finishes in <250ms
+// and the config is initially paused; later snapshots retain the 250ms throttle.
+let nextDiagAt = 0;
 let diagFrames = 0;
 /** dirty flag for draw(): everything draw() consumes, keyed; '' forces a draw */
 let lastDrawKey = '';
