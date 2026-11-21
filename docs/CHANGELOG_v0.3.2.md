@@ -75,6 +75,8 @@
 
 ## 发布产物
 
+GitHub Release：<https://github.com/CiQian233/desktop-pet/releases/tag/v0.3.2>
+
 | 形式 | 文件 | 大小 | SHA-256 |
 | --- | --- | ---: | --- |
 | 便携版，双击即用 | `dist/portable/CalicoPet-portable-0.3.2.exe` | 70.81 MiB | `06A1A709882014CE770A01642FF1E2716D97523B01C654A144E0D807BA165374` |

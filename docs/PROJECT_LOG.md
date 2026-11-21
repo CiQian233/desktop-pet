@@ -2,7 +2,7 @@
 
 > 这份日志记录**每一步对话做了什么、决定了什么、产出在哪**，供后续对话读取，避免重复摸索。
 > 追加规则：每次对话结束前，在「§5 变更时间线」表格追加一行，并在对应小节更新状态。
-> 最后更新：2026-11-21 · 会话 18（v0.3.2：便携版与完整安装包已构建验收，准备 GitHub Release，§4u）
+> 最后更新：2026-11-21 · 会话 18（v0.3.2：双产物验收完成并已发布 GitHub Release，远端 SHA-256 一致，§4u）
 
 ---
 
@@ -146,6 +146,7 @@
 - ✅ **v0.3.2 功能优化完成**：移动残影/高 DPI、多显示器策略、手势、低打扰、电源、原生轮廓、配置恢复、统一边缘描边、真实画布清帧与渲染性能
 - ✅ **开发版验证**：配置核心 4 项单测、完整行为矩阵 31/31、坐姿与携带双姿态真实画布（外轮廓=1、外露非描边=0、内部黑点=0、短碎描边=0、残留/缺失/变色/总差异=0）、Windows 原生命中与隔离桌面真实拖拽通过
 - ✅ **v0.3.2 双产物已完成本地验收**：便携版矩阵 31/31；安装包静默安装/冒烟/卸载通过；SHA-256 与 blockmap 已生成
+- ✅ **v0.3.2 已发布 GitHub**：`main` 已包含源码与公开项目日志，Release 四个附件均为 uploaded，远端 exe SHA-256 与本地一致
 - ⬜ M3 插件宿主　⬜ M4 功能插件　⬜ M5 打磨分发
 
 ### 会话 7 复核结果（2026-09-10，跨会话接手时实测，详见 §4l）
@@ -813,7 +814,9 @@ pet.restore(home.x - windowRect.x, home.y - windowRect.y, 1);   // 错
 
 **③ 校验文件**：`dist/release/SHA256SUMS-v0.3.2.txt` 已生成。便携版 SHA-256 为 `06a1a709882014ce770a01642ff1e2716d97523b01c654a144e0d807ba165374`；安装包为 `95527bc6cf603fb4f1d2c7dd02dd1806f490f4dc7c3c6614d2896d36b5393d6f`。README、PLAN、更新日志和本日志已同步最终产物与验收结果。
 
-**④ GitHub 发布**：项目日志按用户本轮明确要求取消本地忽略并纳入版本库；私人原图、协作记忆、证书和本地构建目录仍保持忽略。发布目标为 `https://github.com/CiQian233/desktop-pet/releases/tag/v0.3.2`，上传内容与远端摘要核验结果将在上传完成后补记。
+**④ GitHub 发布已完成**：项目日志按用户本轮明确要求取消本地忽略并纳入版本库；私人原图、协作记忆、证书和本地构建目录仍保持忽略。功能提交 `5e08fe2` 已推送 `main`，轻量标签 `v0.3.2` 已推送；Release 地址为 `https://github.com/CiQian233/desktop-pet/releases/tag/v0.3.2`，标题为「v0.3.2 · 高 DPI 叠帧修复与稳定性优化」，正文使用 `docs/CHANGELOG_v0.3.2.md`。
+
+Release 已上传四个附件：portable exe、setup exe、setup blockmap 和 `SHA256SUMS-v0.3.2.txt`，状态均为 **uploaded**，`latest=v0.3.2`。远端摘要复核通过：便携版与安装包的 SHA-256 均与本地验收文件完全相同，大小分别为 74,250,244 和 81,753,151 字节。标签触发的重复 Release 工作流已及时取消，防止 CI 重建产物覆盖本次本地已验收并校验的附件；未取消 `main` 的 CI 验证。
 
 ---
 
@@ -876,6 +879,7 @@ pet.restore(home.x - windowRect.x, home.y - windowRect.y, 1);   // 错
 | 2026-11-21 | 15 | **按三张红圈标注定点修复**：外露耳廓不再重涂深色，耳根仅保留被头部覆盖的连接暗线；胸腹删除 ≤4px 短碎外描边；33 帧审计和双姿态新增断言为 0；单测 4/4、矩阵 31/31；仍不打包 | `tools/chibi_hd.py`, `tools/pixel.py`, `art/sprites/chibi-hd/**`, `src/main/main.ts`, `docs/CHANGELOG_v0.3.2.md`, `README.md`, `PLAN.md`（详见 §4r） |
 | 2026-11-21 | 16 | **全部 33 帧统一单层连续深黑外描边**：八邻域补斜角、四邻域限定外部背景，不加内部黑点/胡须描边；双姿态外轮廓=1、外露/内部/短碎异常=0；单测 4/4、矩阵 31/31、原生命中通过；仍不打包 | `tools/pixel.py`, `tools/chibi_hd.py`, `art/sprites/chibi-hd/**`, `src/main/main.ts`, `docs/PROJECT_LOG.md`, `docs/CHANGELOG_v0.3.2.md`（详见 §4s） |
 | 2026-11-21 | 17 | **修复实际窗口叠帧**：恒等变换下改为清除完整 backing store，主画布/蒙版统一 CPU 光栅化；新增同步干净副本逐像素审计，双姿态残留/缺失/变色/总差异均为 0；单测 4/4、矩阵 31/31、原生命中通过 | `src/renderer/renderer.ts`, `src/main/main.ts`, `dist/smoke/composite-fixed-*.png`, `docs/**`（详见 §4t） |
+| 2026-11-21 | 18 | **v0.3.2 打包并发布 GitHub**：便携版 31/31、安装包安装/冒烟/卸载通过；生成 SHA-256/blockmap；源码和公开日志推送 main，Release 四附件上传且远端 exe 摘要一致 | `dist/portable/CalicoPet-portable-0.3.2.exe`, `dist/installer/CalicoPet-setup-0.3.2.exe`, `dist/release/SHA256SUMS-v0.3.2.txt`, `docs/PROJECT_LOG.md`（详见 §4u） |
 
 > **会话归属存疑**：会话 5 与 6 的精确切分无从考证（会话原文不可读，见 §4l），
 > 上表按内容归并；时间线与结论本身均来自 §4g–§4k 与代码实测。
