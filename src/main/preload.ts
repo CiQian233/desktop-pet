@@ -28,6 +28,7 @@ export interface PetBridge {
   setShape(rects: Rect[]): void;
   requestFrame(): void;
   openMenu(): void;
+  showBubble(payload: { name: string; text: string; kind: string; period: string }): void;
   quit(): void;
   /** config bridge, so a probe can freeze the animation while measuring */
   realBounds(): { x: number; y: number } | null;
@@ -45,6 +46,7 @@ export interface PetBridge {
   onPat(cb: () => void): void;
   onActivity(cb: (active: boolean) => void): void;
   onPowerSaving(cb: (enabled: boolean) => void): void;
+  onNaturalPreview(cb: (key: string) => void): void;
 }
 
 const bridge: PetBridge = {
@@ -54,6 +56,7 @@ const bridge: PetBridge = {
   setShape: (rects) => ipcRenderer.send('pet:setShape', rects),
   requestFrame: () => ipcRenderer.send('pet:requestFrame'),
   openMenu: () => ipcRenderer.send('app:openMenu'),
+  showBubble: (payload) => ipcRenderer.send('pet:bubble', payload),
   quit: () => ipcRenderer.send('app:quit'),
   realBounds: () => ipcRenderer.sendSync('pet:realBounds'),
   onConfig: (cb) => ipcRenderer.on('config:changed', (_e, cfg) => cb(cfg)),
@@ -64,6 +67,7 @@ const bridge: PetBridge = {
   onPat: (cb) => ipcRenderer.on('pet:pat', () => cb()),
   onActivity: (cb) => ipcRenderer.on('pet:activity', (_e, active) => cb(Boolean(active))),
   onPowerSaving: (cb) => ipcRenderer.on('pet:powerSaving', (_e, enabled) => cb(Boolean(enabled))),
+  onNaturalPreview: (cb) => ipcRenderer.on('pet:previewNatural', (_e, key) => cb(String(key))),
 };
 
 contextBridge.exposeInMainWorld('pet', bridge);

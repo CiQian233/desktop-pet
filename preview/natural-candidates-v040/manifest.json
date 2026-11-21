@@ -1,0 +1,79 @@
+[
+  {
+    "key": "stretch",
+    "title": "伸懒腰",
+    "file": "stretch-abc.gif",
+    "choices": [
+      "A · 向上舒展（当前）",
+      "B · 弓背伸展",
+      "C · 低位前伸"
+    ],
+    "frames": 8
+  },
+  {
+    "key": "groom",
+    "title": "舔毛",
+    "file": "groom-abc.gif",
+    "choices": [
+      "A · 侧头舔毛（当前）",
+      "B · 伸舌慢舔",
+      "C · 抬爪洗脸"
+    ],
+    "frames": 8
+  },
+  {
+    "key": "scratch",
+    "title": "磨爪",
+    "file": "scratch-abc.gif",
+    "choices": [
+      "A · 交替磨爪（当前）",
+      "B · 俯身快磨",
+      "C · 单边慢磨"
+    ],
+    "frames": 8
+  },
+  {
+    "key": "lieDown",
+    "title": "趴下",
+    "file": "lieDown-abc.gif",
+    "choices": [
+      "A · 缓缓趴下（当前）",
+      "B · 匍匐趴下",
+      "C · 侧卧蜷眠"
+    ],
+    "frames": 8
+  },
+  {
+    "key": "roll",
+    "title": "翻肚",
+    "file": "roll-abc.gif",
+    "choices": [
+      "A · 仰卧翻肚（当前）",
+      "B · 左右摇肚",
+      "C · 原地侧滚"
+    ],
+    "frames": 8
+  },
+  {
+    "key": "greet",
+    "title": "启动迎接",
+    "file": "greet-abc.gif",
+    "choices": [
+      "A · 摇尾迎接（当前）",
+      "B · 举爪打招呼",
+      "C · 轻跳迎接"
+    ],
+    "frames": 8
+  },
+  {
+    "key": "wakeUp",
+    "title": "睡醒叫醒",
+    "file": "wakeUp-abc.gif",
+    "choices": [
+      "A · 睁眼叫醒（当前）",
+      "B · 伸腰苏醒",
+      "C · 迷糊回神"
+    ],
+    "frames": 8
+  }
+]

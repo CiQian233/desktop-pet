@@ -10,6 +10,8 @@ export type PetMode = 'rest' | 'roam' | 'follow';
 export type PetScale = 2 | 3 | 4 | 6;
 /** walking pace preset for roam mode; the pixel speeds live in core/controller */
 export type RoamSpeed = 'slow' | 'normal' | 'fast';
+export type PetPersonality = 'gentle' | 'lively' | 'aloof';
+export type NaturalFrequency = 'low' | 'normal' | 'high';
 
 export interface PetConfig {
   configVersion: 1;
@@ -25,6 +27,12 @@ export interface PetConfig {
   alwaysOnTop: boolean;
   displayId: number | null;
   batterySaver: boolean;
+  petName: string;
+  personality: PetPersonality;
+  bubblesEnabled: boolean;
+  randomChatter: boolean;
+  naturalEnabled: boolean;
+  naturalFrequency: NaturalFrequency;
 }
 
 export interface Rect {
@@ -45,6 +53,9 @@ export interface FrameInfo {
   powerSaving: boolean;
   /** true only for automated runs; enables the renderer's introspection hook */
   testMode: boolean;
+  /** test-only switches that exercise the real startup/idle scheduling paths */
+  forceGreet?: boolean;
+  fastIdle?: boolean;
 }
 
 export interface Bridge {
@@ -54,6 +65,7 @@ export interface Bridge {
   setShape(rects: Rect[]): void;
   requestFrame(): void;
   openMenu(): void;
+  showBubble(payload: { name: string; text: string; kind: string; period: string }): void;
   quit(): void;
   realBounds(): { x: number; y: number } | null;
   onConfig(cb: (cfg: PetConfig) => void): void;
@@ -71,6 +83,7 @@ export interface Bridge {
   onPat(cb: () => void): void;
   onActivity(cb: (active: boolean) => void): void;
   onPowerSaving(cb: (enabled: boolean) => void): void;
+  onNaturalPreview(cb: (key: string) => void): void;
 }
 
 declare global {

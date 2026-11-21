@@ -2,7 +2,7 @@
 
 > 这份日志记录**每一步对话做了什么、决定了什么、产出在哪**，供后续对话读取，避免重复摸索。
 > 追加规则：每次对话结束前，在「§5 变更时间线」表格追加一行，并在对应小节更新状态。
-> 最后更新：2026-11-21 · 会话 18（v0.3.2：双产物验收完成并已发布 GitHub Release，远端 SHA-256 一致，§4u）
+> 最后更新：2026-11-21 · 会话 23（v0.4.0：更新日志统一迁移，双产物构建验收并发布 GitHub，§4z）
 
 ---
 
@@ -12,12 +12,12 @@
 | --- | --- |
 | 目标 | 以用户家三花猫照片为形象基底，做一个像素风桌面宠物，可 exe 启动，支持插件扩展 |
 | 工作目录 | `F:\desktop-pet` |
-| 技术栈 | **Electron 33 + TypeScript**（用户确认） |
+| 技术栈 | **Electron 45 + TypeScript**（Electron 45.4.1 / TypeScript 5.9.3） |
 | 插件形态 | **外部插件目录 + 热加载**（用户确认）：每个功能一个文件夹，丢进 `plugins/` 即生效，不重打包 exe；宿主仍是后续规划 |
-| 形象 | **chibi 高密度精修版**，原生 **76×68 px**，22 色，7 组 / **33 帧**动画 |
+| 形象 | **chibi 高密度精修版**，原生 **76×68 px**，22 色，14 组 / **103 帧**动画 |
 | 行为模式 | **原地待机 / 自由走动 / 跟随鼠标**，程序内可切换 |
 | 默认倍率 | **3×（228×204 CSS px）**，程序内可选 **2× / 3× / 4× / 6×** |
-| 打包产物 | v0.3.2 计划提供便携版 + 安装包，分别放 `dist/portable/` 与 `dist/installer/`；**用户要求补充确认前暂不打包** |
+| 打包产物 | v0.4.0 便携版 + 安装包，分别放 `dist/portable/` 与 `dist/installer/`；已验收并上传 GitHub Release |
 | 交互补丁 | 程序内可**暂停 / 继续**、**隐藏 / 显示**；单击摸头、双击生气、拖拽携带，暂停不加暗色遮罩或角标 |
 | 移动范围 | 当前显示器**工作区二维**；漫游保持单工作区，跟随与拖拽可按指针切屏，支持自动/固定显示器 |
 | 拖拽手感 | 内容区坐标 + 递增位置序号，丢弃过期原生回传；完整回归 `drag-pointer` 漂移 1px、`window-sync` 最大偏差 1px |
@@ -33,8 +33,10 @@
 
 | 产物 | 路径 | 大小 |
 | --- | --- | --- |
-| 便携版 exe（免安装，双击即用） | `dist/portable/CalicoPet-portable-0.1.0.exe` | 70.8 MB |
-| 安装包（NSIS，可选安装目录/建快捷方式） | `dist/installer/CalicoPet-setup-0.1.0.exe` | 77.9 MB |
+| 便携版 exe（免安装，双击即用） | `dist/portable/CalicoPet-portable-0.4.0.exe` | 105.4 MB |
+| 安装包（NSIS，可选安装目录/建快捷方式） | `dist/installer/CalicoPet-setup-0.4.0.exe` | 115.8 MB |
+| 发布校验 | `dist/release-v040/SHA256SUMS.txt`、`artifact-inventory.json` | 含安装包 blockmap |
+| 发布验收 | `dist/release-v040/` | 便携矩阵、安装/启动/卸载与清理证据 |
 | 程序图标 | `build/icon.ico`（7 种尺寸） | |
 | 托盘图标 | `assets/tray.png` / `tray@2x.png` | |
 
@@ -89,7 +91,7 @@
 | 项 | 值 |
 | --- | --- |
 | 原生分辨率 | **76 × 68 px** |
-| 动画 | 7 组 / **33 帧**：`sit`(4) `blink`(6) `walk`(6) `sleep`(4) `pat`(5) `carry`(6) `angry`(2) |
+| 动画 | 14 组 / **103 帧**：基础 7 组 + `stretch`(12) `groom`(11) `scratch`(6) `lieDown`(7) `roll`(16) `greet`(6) `wakeUp`(12)；保留原 83 帧并新增 20 张桥接帧 |
 | 调色板 | 白毛 4 阶、姜色 4 阶、墨色 4 阶、虹膜 3 段、粉鼻/内耳、描边 = 22 色 |
 | 眼睛 | 眼睑暗环 + 虹膜三段渐变 + 竖瞳 + 双点高光 + 下缘反光 |
 | 腿 | 两条分立前腿、内外侧分离阴影、脚爪 3 道脚趾分隔 |
@@ -820,6 +822,68 @@ Release 已上传四个最终附件：portable exe、setup exe、setup blockmap 
 
 **⑤ 云端 CI 修复与最终重建**：首次发布后，GitHub Runner 暴露了本地未出现的启动诊断与小工作区时序问题。修复包括：拖拽探针按 `activeArea()` 实际工作区取点；烟雾测试使用独立 userData 并绕过生产单实例锁；渲染器同步发布首帧；首份诊断立即发布、后续仍按 250ms 节流。最终功能提交 `6060665` 的云端运行 `44895889478` 为 **31/31 通过**。随后重新完整构建双产物并再次验收：最终便携版 **31/31**，最终安装包在全新隔离目录通过安装、7 组动画启动冒烟和卸载；最终附件已覆盖首次构建，Release 正文与校验文件同步更新。`v0.3.2` 标签对齐包含最终代码与公开日志的发布收尾提交。
 
+### 4v. v0.4.0 设置中心、气泡台词与自然动作（会话 19，2026-11-21）
+
+用户提供两张更新清单，要求在不改变现有功能的前提下逐项实现，并且每添加一项都重新验证程序可运行性；全部完成后暂不制作安装包和便携版，等待用户确认。版本号已升为 **0.4.0**，v0.3.2 的正式发布目录与 Release 未改动。
+
+**① 设置中心**：新增独立 `src/settings/` 窗口与 `settings-preload.ts`，包含行为、声音、免打扰、性能、插件、外观、关于七个分页。原菜单的模式、速度、倍率、自启、置顶、省电和显示器设置均接入既有配置 Store；右键菜单收缩为暂停、隐藏、设置、退出。声音页明确当前无音效，插件页仅展示/打开目录，不伪称宿主已实现。首次专项发现 `tsconfig.renderer.json` 未包含新目录，页面只有静态结构；修正 include 后，七分页与实际倍率修改/恢复通过，桌宠正常启动。
+
+**② 气泡与台词**：新增名字、三种性格、气泡总开关和随机闲聊开关，旧配置自动使用默认值。台词支持四个时段、启动迎接与随机闲聊；默认约 3–5 分钟一次，移动、拖拽、暂停、隐藏、锁屏和休眠不主动说话。气泡使用 `src/bubble/` 独立透明穿透窗口，跟随猫咪且限制在工作区，不改变主画布、窗口形状或命中逻辑。专项通过设置页修改名字/性格，验证昼夜文本、真实气泡内容/位置、关闭即隐藏、关闭后禁止播放及闲聊独立开关。配置核心单测保持 4/4。
+
+**③ 七个自然动作逐项加入**：新增 `tools/natural_frames.py`，在 76×68 原生调色板栅格上生成伸懒腰 8 帧、舔毛 8 帧、磨爪 6 帧、趴下 6 帧、翻肚 8 帧、启动迎接 6 帧、睡醒叫醒 6 帧；缩放使用最近邻并复用统一外描边。总数变为 **14 组 / 81 帧**。每个动作均单独构建并播放验证；启动迎接另验证真实启动自动触发，睡醒叫醒另验证既有打盹状态与唤醒计时器。七动作连续回归中，翻肚结束后原有眨眼先接管，断言调整为“自然动作已退出、未残留持握、未切换到其他自然动作”后整套通过。
+
+**④ 最终回归与外观复核**：白底复核图 `dist/smoke-v040-natural/actions-contact.png` 已检查，外描边连续且无新增游离黑点。配置单测 **4/4**、文本守卫负例通过、启动冒烟确认 14 组 81 帧。完整行为矩阵 **34/34 全部通过**，覆盖原功能及新增 natural/dialogue/settings 三项；Windows `WindowFromPoint` 原生命中通过，渲染崩溃恢复用例包含在矩阵中并通过。
+
+**⑤ 停止点**：只完成源码、素材、开发版验证和日志。**未执行任何 v0.4.0 打包，未生成新安装包、便携版、blockmap 或 SHA-256，未提交或上传 GitHub**，等待用户确认。
+
+### 4w. v0.4.0 七种自然动作候选与用户选型（会话 20，2026-11-21）
+
+用户指出自然动作应先提供多款供参考，再决定采用哪一款。保留当时开发版不动，新增 `tools/natural_candidates.py`，在 `preview/natural-candidates-v040/` 输出七种动作的 A/B/C 动态对比与代表帧总览；A 为当时当前款，B/C 为新款，共 21 款。七个 GIF 均验证为 8 帧，正式素材在候选阶段保持 14 组 81 帧不变。
+
+**① 用户最终选型**：伸懒腰 **B（弓背伸展）**、舔毛 **B（伸舌慢舔）**、磨爪 **A（交替磨爪）**、趴下 **A（缓缓趴下）**、翻肚 **C（原地侧滚）**、启动迎接 **A（摇尾迎接）**、睡醒叫醒 **B（伸腰苏醒）**。只替换 stretch/groom/roll/wakeUp 四组，scratch/lieDown/greet 三组源码与素材不变。叫醒 B 为 8 帧，因此当前总数为 **14 组 / 83 帧**，原生栅格仍为 76×68。
+
+**② 逐项接入与候选一致性**：每替换一组都重新运行 `export_chibi_hd.py`、资源同步和真实 Electron `natural-check`，四组专项均通过。首次候选逐像素比对发现 stand 的 `look` 参数在生成器与候选脚本中分别为 1 与 0.3，导致 stretch 第 1 帧不一致；统一为 0.3 后重新导出，stretch 与 wakeUp 再测通过，stretch B、groom B、roll C、wakeUp B 的全部正式帧与所选候选完全一致。另一次运行完成七动作连续播放、正常启动自动迎接及打盹后的自动叫醒。
+
+**③ 最终回归**：配置核心单测 **4/4**、文本守卫正负例通过；启动冒烟加载 14 组，资源同步验证 **83** 个原生帧；Windows `WindowFromPoint` 原生命中通过。完整矩阵 **34/34 全部通过**，包含自然动作、气泡、设置中心、真实拖拽、携带姿态、DPR 1.5 双姿态像素审计、性能、渲染恢复、电源与漫游等既有能力。最终白底图 `dist/smoke-v040-selected-natural-all/selected-actions-contact.png` 已人工复核。
+
+**④ 停止点不变**：本轮只替换选定动作、验证并更新文档；**未执行 v0.4.0 打包，未生成安装包、便携版、blockmap 或 SHA-256，未提交或上传 GitHub**。真实双屏热插拔、混合 DPI 与真实电源状态切换仍是人工硬件验收项。
+
+### 4x. v0.4.0 全量复审与优化清单（会话 21，2026-11-21）
+
+按用户要求再次独立审查源码、配置、83 帧素材、窗口与气泡、安全边界、依赖及完整运行回归，本轮未修改功能源码。构建、文本守卫正负例、配置单测 **4/4**、83 帧启动、Windows 原生命中、自动迎接/自动叫醒均通过。34 份矩阵日志由独立复核器按实际 JSON 断言逐项重算，结果 **34/34**，证据为 `dist/audit-v040/matrix/rechecked-summary.json`；外层后台通道未留下标准 summary，未把进程结束本身当作通过依据。
+
+新增全帧审计发现 **6 张携带帧底部外描边触及画布最后一行**，其余 77 帧未触边；83 帧尺寸、调色板、透明通道及单连续外轮廓组件均通过。帧间测量还定位了 roll/groom/wakeUp 入场或退场的明显跳变，建议只补过渡帧、不改变用户选型。源码层面记录气泡尾部方向/水平指向、时段标签优先级、设置保存与自启成功反馈、自然动作手动预览/频率控制，以及测试探针模块化等优化项。
+
+官方 registry 的 `npm audit` 报告 **19 项公告（1 critical / 15 high / 3 moderate）**，集中在 Electron 与打包工具链；镜像源未实现 audit 接口，官方源已完成检查。未运行强制修复，建议将依赖大版本升级与真实打包验收作为独立维护步骤。完整问题证据、优先级与推荐顺序见 `docs/REVIEW_v0.4.0.md`，全帧数据见 `dist/audit-v040/asset-audit.json`。本轮仍未打包、未提交或上传 GitHub。
+
+### 4y. v0.4.0 全量优化实施（会话 22，2026-11-21）
+
+用户确认“按建议全部执行”，并明确本轮**只优化和验证，不打包、不上传 GitHub**。携带导出先修复 `fit_into()` 在无需缩小时直接返回的问题，6 张携带帧重新居中；前后哈希证明仅 6 张六倍源帧和 6 张原生帧变化。新增 `tools/check_sprite_assets.py` 与 `audit:assets`，携带像素、携带姿态、真实拖拽及 Windows 原生命中专项通过。
+
+气泡新增上下 placement、边缘 tailX 和具体时段标签；顶部/左边缘真实窗口专项通过，证据在 `dist/bubble-optimization/`。设置更新改为真实 flush 后返回结果，自启设置后回读状态；测试中的 Windows 自启使用隔离模拟，写入失败和自启失败负例均通过，证据在 `dist/settings-feedback/`。设置探针拆为 `src/main/settings-probe.ts`。
+
+行为页新增随机自然动作开关、较低/标准/较高频率和七个手动预览按钮；七键均验证到真实 Animator 的对应 override，关闭随机后预览、暂停恢复和隐藏恢复均通过。过渡优化保留原 83 张选定关键帧，新增 20 张桥接帧，当前为 **14 组 103 帧**；原生与六倍源图哈希保留检查为 83/83，最大帧间重心跳变由 8.96 降为 4.25 原生像素。素材审计新增 4.5 像素 / 42% 阈值，103 帧边界、调色板、透明通道、轮廓与引用全绿。动态复核图和 GIF 位于 `preview/natural-transitions-v040/`。
+
+工程上，矩阵每项完成后立即写入 `results/<用例>.json`、`summary.json` 和 `summary.txt`；删除无引用 `walk_strip.png` 及其导出特殊处理。依赖升级为 **Electron 45.4.1 / electron-builder 26.18.0**，TypeScript 保持 5.9.3；仅对两个打包链位置覆盖 minimatch 11.0.9，官方 `npm audit` 最终为 **0 条公告**。官方源 tarball 下载曾卡住，改用镜像完成依赖和 Electron 运行时安装，安全审计仍使用官方源；未运行 `npm audit fix --force`。
+
+最终在 Electron **45.4.1** 下完成全文文本守卫与 2 个负例、配置单测 **4/4**、103 帧素材审计、旧帧保留 **83/83**、完整行为矩阵 **34/34**、启动冒烟和 Windows 原生命中；全部通过。正常开发版已在主桌面完成启动与持续运行观察，14 组动画加载成功、stderr 为空；交付前进程已退出，日志未记录异常。逐项矩阵证据在 `dist/final-v040-optimization/summary.json`，总验收摘要为 `dist/final-v040-optimization/verification-summary.json`。
+
+发布边界不变：没有执行 v0.4.0 打包、Git 提交或 GitHub 上传。真实双屏热插拔、混合 DPI、真实电源切换，以及新依赖下真实安装/便携目录行为仍需后续按授权验收。
+
+### 4z. v0.4.0 日志迁移、双产物验收与 GitHub 发布（会话 23，2026-11-21）
+
+用户明确授权将当前及后续更新日志统一放入 `changelog/`，随后构建完整安装包与便携版并上传 GitHub。目录既有命名为 `v0.2.0.md`、`v0.3.0.md`、`v0.3.1.md`、`v0.3.2.md`，因此当前日志定为 `changelog/v0.4.0.md`，并新增 `changelog/README.md` 固定后续 `vX.Y.Z.md` 规则；Release 工作流同步改为 Node 22 和该日志路径。
+
+**① 构建修正**：清理 npm 升级时误写入的 `desktop-pet: file:` 自引用及 Junction。electron-builder 26 不再依赖 `7zip-bin`，`scripts/pack.ps1` 改为仅对旧依赖启用 legacy shim，并为当前打包进程补充 Windows PowerShell 目录，不修改系统 PATH。第三次执行 `npm run pack:all` 成功，前两次均在产物生成前停止。
+
+**② 本地发布物**：`CalicoPet-portable-0.4.0.exe` 为 110,487,055 bytes；`CalicoPet-setup-0.4.0.exe` 为 121,421,125 bytes；安装包 blockmap 为 128,419 bytes。两个 exe 均为 **NotSigned**。完整 SHA-256 写入 `changelog/v0.4.0.md` 和 `dist/release-v040/SHA256SUMS.txt`。
+
+**③ 发布验收**：便携启动器真实启动通过，退出后 `%TEMP%\CalicoPet` 清理；便携发布内容矩阵 **34/34**。安装包在隔离目录静默安装、真实启动、静默卸载均返回 0，安装目录、卸载注册项、桌面和开始菜单快捷方式全部清理。两个 asar 均为 v0.4.0，包含 103 帧、设置中心和气泡页面且无自引用。总报告为 `dist/release-v040/verification-summary.json`，`allPassed=true`。
+
+**④ 发布方式**：源码与公开日志推送 `main` 后，以同一提交创建 v0.4.0 tag 和 GitHub Release，直接上传上述本地已验收 exe、blockmap 与 SHA256SUMS，避免再推送 tag 触发 CI 重复构建和重复发布。发布地址为 `https://github.com/CiQian233/desktop-pet/releases/tag/v0.4.0`，上传后需逐项核对远端附件大小和 SHA-256。
+
+真实双屏热插拔、混合 DPI 与真实拔电/锁屏/休眠仍保留为硬件人工验收项，不由本轮自动测试替代。
+
 ---
 
 ## 5. 变更时间线
@@ -882,6 +946,11 @@ Release 已上传四个最终附件：portable exe、setup exe、setup blockmap 
 | 2026-11-21 | 16 | **全部 33 帧统一单层连续深黑外描边**：八邻域补斜角、四邻域限定外部背景，不加内部黑点/胡须描边；双姿态外轮廓=1、外露/内部/短碎异常=0；单测 4/4、矩阵 31/31、原生命中通过；仍不打包 | `tools/pixel.py`, `tools/chibi_hd.py`, `art/sprites/chibi-hd/**`, `src/main/main.ts`, `docs/PROJECT_LOG.md`, `docs/CHANGELOG_v0.3.2.md`（详见 §4s） |
 | 2026-11-21 | 17 | **修复实际窗口叠帧**：恒等变换下改为清除完整 backing store，主画布/蒙版统一 CPU 光栅化；新增同步干净副本逐像素审计，双姿态残留/缺失/变色/总差异均为 0；单测 4/4、矩阵 31/31、原生命中通过 | `src/renderer/renderer.ts`, `src/main/main.ts`, `dist/smoke/composite-fixed-*.png`, `docs/**`（详见 §4t） |
 | 2026-11-21 | 18 | **v0.3.2 打包并发布 GitHub**：修复云端首帧/诊断与小工作区时序，本地及云端矩阵均 31/31；最终便携版 31/31、安装包安装/冒烟/卸载通过；生成 SHA-256/blockmap；源码和公开日志推送 main，Release 四附件覆盖上传且远端摘要一致 | `dist/portable/CalicoPet-portable-0.3.2.exe`, `dist/installer/CalicoPet-setup-0.3.2.exe`, `dist/release/SHA256SUMS-v0.3.2.txt`, `docs/PROJECT_LOG.md`（详见 §4u） |
+| 2026-11-21 | 19 | **v0.4.0 逐项新增**：设置中心七分页、可配置且可关闭的气泡台词、七种自然动作；每项单独运行验证，14 组 81 帧；单测 4/4、完整矩阵 34/34、原生命中通过；按用户要求暂不打包 | `src/settings/**`, `src/bubble/**`, `src/renderer/core/dialogue.ts`, `tools/natural_frames.py`, `changelog/v0.4.0.md`（详见 §4v） |
+| 2026-11-21 | 20 | **七种动作 A/B/C 预览与用户定款**：采用伸懒腰B、舔毛B、磨爪A、趴下A、翻肚C、迎接A、叫醒B；四项逐组验证且正式帧与候选逐像素一致，14 组 83 帧；七动作及自动路径、单测 4/4、矩阵 34/34、原生命中通过；仍不打包 | `tools/natural_candidates.py`, `tools/natural_frames.py`, `preview/natural-candidates-v040/**`, `art/sprites/chibi-hd/**`, `docs/**`（详见 §4w） |
+| 2026-11-21 | 21 | **v0.4.0 全量复审**：源码/配置/83帧/窗口安全/依赖检查，矩阵逐日志断言34/34、单测4/4、自动路径和原生命中通过；新发现6张携带帧底边裁切及气泡/保存反馈等优化项，官方npm audit 19项，形成分级清单；未改功能、未打包 | `docs/REVIEW_v0.4.0.md`, `docs/PROJECT_LOG.md`, `dist/audit-v040/**`（详见 §4x） |
+| 2026-11-21 | 22 | **按授权执行全部优化**：修携带边界、气泡尾部/时段、真实保存与自启反馈、自然动作预览/频率、20张过渡帧、探针模块化和增量测试证据；升级 Electron45/builder26，官方audit归零；当前14组103帧，仍不打包不上传 | `src/**`, `tools/**`, `scripts/**`, `art/sprites/chibi-hd/**`, `changelog/v0.4.0.md`（详见 §4y） |
+| 2026-11-21 | 23 | **v0.4.0 双产物构建验收与发布**：日志统一迁移 `changelog/vX.Y.Z.md`；清理自引用并适配 builder26；便携内容矩阵34/34，便携启动/临时目录、安装/启动/卸载及快捷方式清理通过；生成SHA-256并上传GitHub Release | `changelog/**`, `scripts/pack.ps1`, `dist/release-v040/**`, `dist/portable/CalicoPet-portable-0.4.0.exe`, `dist/installer/CalicoPet-setup-0.4.0.exe`（详见 §4z） |
 
 > **会话归属存疑**：会话 5 与 6 的精确切分无从考证（会话原文不可读，见 §4l），
 > 上表按内容归并；时间线与结论本身均来自 §4g–§4k 与代码实测。
@@ -893,13 +962,12 @@ Release 已上传四个最终附件：portable exe、setup exe、setup blockmap 
 1. **先读本文件**，再看 `PLAN.md`（计划与架构）与 `README.md`（怎么跑、怎么改）。
 2. 修改形象 → 改 `tools/chibi_hd.py` 的 `Params` 或几何参数，然后跑：
    ```powershell
-   python tools/export_chibi_hd.py      # 重新导出 33 帧 + meta.json
+   python tools/export_chibi_hd.py      # 重新导出 103 帧 + meta.json
    npm run build                        # 同步进 dist（`npm start` 会自动跑）
    ```
    `art/sprites/chibi-hd/meta.json` 是动画的单一来源；`scripts/sync-assets.mjs`
    会把它和帧一起装配到 `dist/renderer/renderer/sprites/`，并校验每一帧都存在。
-3. 加动画 → 在 `tools/export_chibi_hd.py` 的 `ANIMS` 里加一条（标签/fps/循环/参数列表），
-   参数直接复用 `Params` 的字段，**不必改渲染代码**。
+3. 加动画 → 基础动作在 `tools/export_chibi_hd.py` 的 `ANIMS` 里登记；自然动作在 `tools/natural_frames.py` 中生成。参数复用 `Params` 的字段，图集自动读取 meta.json，**不必改渲染代码**。
 4. 加功能 → 走插件目录，不改主程序（M3 完成后）。
 5. 改完必须验证（不要只靠肉眼看屏幕）：
    ```powershell
@@ -910,11 +978,12 @@ Release 已上传四个最终附件：portable exe、setup exe、setup blockmap 
    ```
    这些命令会启动真实 Electron 窗口；测试通过 `PET_USER_DATA_DIR` 隔离配置。若需验证已确认的发布包，再给 `verify-behaviour.ps1` 传 `-Exe <发布exe路径>`。
 6. **每次对话结束前更新本文件的 §4 状态与 §5 时间线。**
+7. **当前及后续版本日志统一写入 `changelog/vX.Y.Z.md`**，与 tag/Release 同名，不再在 `docs/` 下重复新建版本日志。
 
 ### 还没做 / 下次可以接着做
 
 - **M3 插件宿主**：`plugins/` 目录已建好并随包发布（`extraResources`），但加载器还没写。
   设计见 `PLAN.md` §3（manifest、权限白名单、沙箱、热加载、崩溃隔离）。
-- **交互打扰策略**：目前默认完全安静（除了自身动作不说话）。番茄钟/提醒类插件要不要主动出声，待用户确认。
-- **多显示器**：菜单有「移到主显示器」，但跨屏漫游与按显示器记忆位置还没做。
+- **声音能力**：v0.4.0 已提供气泡台词但不播放音效；设置中心声音页仅说明现状，后续若加入音效需单独验收开关与打扰策略。
+- **硬件人工验收**：真实双屏热插拔、混合 DPI、真实拔电/锁屏/休眠仍需人工覆盖；自动测试使用受控状态与单屏环境。
 - **代码签名**：产物未签名，Windows SmartScreen 首次运行会有提示。需要证书才能消除。

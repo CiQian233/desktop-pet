@@ -24,17 +24,21 @@ import {
   nativeImage,
   powerMonitor,
   screen,
+  shell,
   type Point,
   type Rectangle,
 } from 'electron';
-import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { ConfigStore, type PetConfig, type PetMode, type PetScale, type RoamSpeed } from './config';
+import { ConfigStore, type PetConfig, type PetScale } from './config';
+import { runSettingsProbe } from './settings-probe';
 
 const APP_DIR = app.getAppPath();
 const IS_PACKED = app.isPackaged;
 const RENDERER_HTML = join(APP_DIR, 'dist', 'renderer', 'renderer', 'index.html');
+const SETTINGS_HTML = join(APP_DIR, 'dist', 'renderer', 'settings', 'index.html');
+const BUBBLE_HTML = join(APP_DIR, 'dist', 'renderer', 'bubble', 'index.html');
 
 // Keep the userData directory identical between `electron .` and the packaged
 // exe, otherwise dev runs and installed runs would keep separate configs (and
@@ -100,6 +104,11 @@ if (LOG_FILE) {
 const store = new ConfigStore();
 
 let win: BrowserWindow | null = null;
+let settingsWin: BrowserWindow | null = null;
+let bubbleWin: BrowserWindow | null = null;
+let bubbleLoaded = false;
+let bubbleHideTimer: NodeJS.Timeout | null = null;
+let bubblePending: { name: string; text: string; kind: string; period: string } | null = null;
 let tray: Tray | null = null;
 let windowOrigin = { x: 0, y: 0 };
 let latestShape: Rectangle[] = [];
@@ -219,6 +228,7 @@ function moveWindowToAnchor(anchorX: number, anchorY: number, seq = 0): void {
     height: actual.height,
     seq,
   });
+  positionBubble();
 }
 
 function currentWindowRect(): Rectangle {
@@ -382,6 +392,192 @@ function createWindow(): void {
   });
 }
 
+// ---------------------------------------------------------------------------
+// speech bubble: a separate click-through window, never part of the pet's shape
+// ---------------------------------------------------------------------------
+
+const BUBBLE_SIZE = { width: 340, height: 104 };
+const NATURAL_ACTION_KEYS = ['stretch', 'groom', 'scratch', 'lieDown', 'roll', 'greet', 'wakeUp'];
+
+function positionBubble(): void {
+  if (!bubbleWin || bubbleWin.isDestroyed() || !bubbleWin.isVisible()) return;
+  const area = activeArea();
+  const rect = currentWindowRect();
+  const x = Math.max(area.x, Math.min(
+    Math.round(rect.x + rect.width / 2 - BUBBLE_SIZE.width / 2),
+    area.x + area.width - BUBBLE_SIZE.width,
+  ));
+  const above = rect.y - BUBBLE_SIZE.height - 7;
+  const below = rect.y + rect.height + 7;
+  const placement = above >= area.y ? 'above' : 'below';
+  const y = placement === 'above' ? above : Math.min(below, area.y + area.height - BUBBLE_SIZE.height);
+  bubbleWin.setContentBounds({ x, y: Math.max(area.y, y), ...BUBBLE_SIZE });
+  const tailX = Math.max(24, Math.min(BUBBLE_SIZE.width - 24,
+    Math.round(rect.x + rect.width / 2 - x)));
+  bubbleWin.webContents.send('bubble:placement', { placement, tailX });
+}
+
+function ensureBubbleWindow(): BrowserWindow {
+  if (bubbleWin && !bubbleWin.isDestroyed()) return bubbleWin;
+  const created = new BrowserWindow({
+    width: BUBBLE_SIZE.width,
+    height: BUBBLE_SIZE.height,
+    transparent: true,
+    backgroundColor: '#00000000',
+    frame: false,
+    roundedCorners: false,
+    thickFrame: false,
+    resizable: false,
+    movable: false,
+    minimizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    skipTaskbar: true,
+    hasShadow: false,
+    focusable: false,
+    show: false,
+    alwaysOnTop: store.all().alwaysOnTop,
+    webPreferences: {
+      preload: join(__dirname, 'bubble-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      backgroundThrottling: false,
+    },
+  });
+  bubbleWin = created;
+  bubbleLoaded = false;
+  created.setIgnoreMouseEvents(true);
+  created.setAlwaysOnTop(store.all().alwaysOnTop, 'screen-saver');
+  created.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
+  created.on('closed', () => {
+    if (bubbleWin === created) bubbleWin = null;
+    bubbleLoaded = false;
+    bubblePending = null;
+  });
+  created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  created.webContents.on('did-finish-load', () => {
+    bubbleLoaded = true;
+    if (bubblePending) created.webContents.send('bubble:show', bubblePending);
+    // Re-send placement after the listener exists; showInactive() can precede
+    // the first did-finish-load when the bubble window is created lazily.
+    positionBubble();
+  });
+  void created.loadFile(BUBBLE_HTML).catch((err) => {
+    console.error('[bubble] failed to load:', err);
+  });
+  return created;
+}
+
+function hideBubble(): void {
+  if (bubbleHideTimer) {
+    clearTimeout(bubbleHideTimer);
+    bubbleHideTimer = null;
+  }
+  bubblePending = null;
+  if (bubbleWin && !bubbleWin.isDestroyed()) bubbleWin.hide();
+}
+
+function showPetBubble(payload: { name?: unknown; text?: unknown; kind?: unknown; period?: unknown }): void {
+  if (!store.all().bubblesEnabled || !activityActive) return;
+  const text = typeof payload.text === 'string' ? payload.text.trim().slice(0, 80) : '';
+  if (!text) return;
+  const clean = {
+    name: typeof payload.name === 'string' && payload.name.trim() ? payload.name.trim().slice(0, 12) : store.all().petName,
+    text,
+    kind: typeof payload.kind === 'string' ? payload.kind.slice(0, 16) : 'random',
+    period: typeof payload.period === 'string' ? payload.period.slice(0, 16) : '',
+  };
+  const created = ensureBubbleWindow();
+  bubblePending = clean;
+  if (bubbleLoaded) created.webContents.send('bubble:show', clean);
+  if (!created.isVisible()) created.showInactive();
+  positionBubble();
+  if (bubbleHideTimer) clearTimeout(bubbleHideTimer);
+  bubbleHideTimer = setTimeout(hideBubble, 4600);
+}
+
+// ---------------------------------------------------------------------------
+// settings centre
+// ---------------------------------------------------------------------------
+
+function pluginsDirectory(): string {
+  return IS_PACKED ? join(process.resourcesPath, 'plugins') : join(APP_DIR, 'plugins');
+}
+
+function settingsState(): Record<string, unknown> {
+  let plugins: Array<{ name: string; hasManifest: boolean }> = [];
+  try {
+    plugins = readdirSync(pluginsDirectory(), { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => ({
+        name: entry.name,
+        hasManifest: existsSync(join(pluginsDirectory(), entry.name, 'manifest.json')),
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  } catch {
+    // A missing plugin directory is an empty state, not a settings failure.
+  }
+  return {
+    config: store.all(),
+    version: app.getVersion(),
+    hidden: manuallyHidden,
+    displays: screen.getAllDisplays().map((display) => ({
+      id: display.id,
+      width: display.workArea.width,
+      height: display.workArea.height,
+      primary: display.id === screen.getPrimaryDisplay().id,
+    })),
+    plugins,
+  };
+}
+
+function sendSettingsState(): void {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.webContents.send('settings:state', settingsState());
+  }
+}
+
+function openSettingsWindow(): BrowserWindow {
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    settingsWin.show();
+    settingsWin.focus();
+    sendSettingsState();
+    return settingsWin;
+  }
+  const created = new BrowserWindow({
+    width: 780,
+    height: 640,
+    minWidth: 660,
+    minHeight: 500,
+    show: false,
+    autoHideMenuBar: true,
+    backgroundColor: '#f4f1ea',
+    title: 'CalicoPet 设置中心',
+    webPreferences: {
+      preload: join(__dirname, 'settings-preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      spellcheck: false,
+    },
+  });
+  settingsWin = created;
+  created.once('ready-to-show', () => created.show());
+  created.on('closed', () => {
+    if (settingsWin === created) settingsWin = null;
+  });
+  created.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+  created.webContents.on('will-navigate', (event, url) => {
+    if (url !== created.webContents.getURL()) event.preventDefault();
+  });
+  created.webContents.on('did-finish-load', sendSettingsState);
+  void created.loadFile(SETTINGS_HTML).catch((err) => {
+    console.error('[settings] failed to load:', err);
+  });
+  return created;
+}
+
 /** shown to the renderer on boot and whenever the frame changes */
 function frameInfo(): Record<string, unknown> {
   const area = activeArea();
@@ -395,6 +591,8 @@ function frameInfo(): Record<string, unknown> {
     powerSaving,
     /** test hooks are installed only for automated runs, never in normal use */
     testMode: SMOKE_MS > 0 || TEST_PROBE.length > 0,
+    forceGreet: process.env.PET_NATURAL_STARTUP === '1',
+    fastIdle: process.env.PET_NATURAL_AUTO_WAKE === '1',
   };
 }
 
@@ -417,9 +615,12 @@ function applyConfig(previous: PetConfig, cfg: PetConfig, part: Partial<PetConfi
   const positionOnly = keys.length > 0 && keys.every((key) => key === 'x' || key === 'y' || key === 'facing');
   if (positionOnly) return;
 
+  if (previous.autostart !== cfg.autostart) applyAutostart(cfg.autostart);
+
   if (win) {
     if (previous.alwaysOnTop !== cfg.alwaysOnTop) {
       win.setAlwaysOnTop(cfg.alwaysOnTop, 'screen-saver');
+      bubbleWin?.setAlwaysOnTop(cfg.alwaysOnTop, 'screen-saver');
     }
     if (previous.scale !== cfg.scale) {
       const { w, h } = windowSize(cfg.scale);
@@ -437,7 +638,9 @@ function applyConfig(previous: PetConfig, cfg: PetConfig, part: Partial<PetConfi
       win.webContents.send('pet:recenter', frameInfo());
     }
   }
+  if (!cfg.bubblesEnabled || cfg.paused) hideBubble();
   tray?.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+  sendSettingsState();
   // Idempotent, and only relevant when mode or paused changed; keeping the call
   // unconditional here avoids duplicating the eligibility rules in two places.
   syncCursorPolling();
@@ -504,6 +707,7 @@ function syncActivity(): void {
   const next = !manuallyHidden && !screenLocked && !systemSuspended;
   if (next === activityActive) return;
   activityActive = next;
+  if (!next) hideBubble();
   if (win && !win.isDestroyed()) win.webContents.send('pet:activity', next);
   syncCursorPolling();
 }
@@ -518,6 +722,7 @@ function togglePetVisibility(): void {
   if (manuallyHidden) win?.hide();
   else win?.showInactive();
   refreshTrayMenu();
+  sendSettingsState();
 }
 
 function applyPowerSaving(enabled: boolean): void {
@@ -534,22 +739,44 @@ function togglePaused(): void {
   patch({ paused: !store.all().paused });
 }
 
+let simulatedAutostart: boolean | null = null;
+
+function loginItemOptions(enabled: boolean): { openAtLogin: boolean; path: string; args: string[] } {
+  // A portable build runs from a temp folder that the launcher deletes the
+  // moment the app exits, so registering process.execPath would write a Run
+  // entry pointing at a path that no longer exists -- autostart would then
+  // silently do nothing on the next boot. The portable launcher exports the
+  // real .exe location in PORTABLE_EXECUTABLE_FILE; prefer it when present.
+  const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
+  const usePortableLauncher = Boolean(portableExe && existsSync(portableExe));
+  return {
+    openAtLogin: enabled,
+    path: usePortableLauncher ? (portableExe as string) : process.execPath,
+    args: usePortableLauncher || IS_PACKED ? [] : [APP_DIR],
+  };
+}
+
 function applyAutostart(enabled: boolean): void {
+  if (SMOKE_MS > 0) {
+    // Never change the developer's real Windows Run entry during a smoke run.
+    simulatedAutostart = process.env.PET_TEST_AUTOSTART_FAILURE === '1' ? !enabled : enabled;
+    return;
+  }
   try {
-    // A portable build runs from a temp folder that the launcher deletes the
-    // moment the app exits, so registering process.execPath would write a Run
-    // entry pointing at a path that no longer exists -- autostart would then
-    // silently do nothing on the next boot. The portable launcher exports the
-    // real .exe location in PORTABLE_EXECUTABLE_FILE; prefer it when present.
-    const portableExe = process.env.PORTABLE_EXECUTABLE_FILE;
-    const usePortableLauncher = Boolean(portableExe && existsSync(portableExe));
-    app.setLoginItemSettings({
-      openAtLogin: enabled,
-      path: usePortableLauncher ? (portableExe as string) : process.execPath,
-      args: usePortableLauncher || IS_PACKED ? [] : [APP_DIR],
-    });
+    app.setLoginItemSettings(loginItemOptions(enabled));
   } catch (err) {
     console.error('[main] autostart failed:', err);
+  }
+}
+
+function autostartMatches(enabled: boolean): boolean {
+  if (SMOKE_MS > 0) return simulatedAutostart === enabled;
+  try {
+    const options = loginItemOptions(enabled);
+    return app.getLoginItemSettings({ path: options.path, args: options.args }).openAtLogin === enabled;
+  } catch (err) {
+    console.error('[main] autostart readback failed:', err);
+    return false;
   }
 }
 
@@ -567,89 +794,11 @@ function trayImage(): Electron.NativeImage {
 
 function buildMenuTemplate(): MenuItemConstructorOptions[] {
   const cfg = store.all();
-  const modes: Array<[PetMode, string]> = [
-    ['rest', '原地待机'],
-    ['roam', '自由走动'],
-    ['follow', '跟着鼠标'],
-  ];
-  const scales: PetScale[] = [2, 3, 4, 6];
-  const roamSpeeds: Array<[RoamSpeed, string]> = [
-    ['slow', '慢'],
-    ['normal', '中'],
-    ['fast', '快'],
-  ];
-
   return [
     { label: cfg.paused ? '继续动作' : '暂停动作', click: () => togglePaused() },
     { label: manuallyHidden ? '显示桌宠' : '隐藏桌宠', click: () => togglePetVisibility() },
     { type: 'separator' },
-    {
-      label: '行为模式',
-      submenu: modes.map(([value, label]) => ({
-        label,
-        type: 'radio' as const,
-        checked: cfg.mode === value,
-        click: () => patch({ mode: value }),
-      })),
-    },
-    {
-      label: '走路速度',
-      submenu: roamSpeeds.map(([value, label]) => ({
-        label,
-        type: 'radio' as const,
-        checked: cfg.roamSpeed === value,
-        click: () => patch({ roamSpeed: value }),
-      })),
-    },
-    {
-      label: '显示倍率',
-      submenu: scales.map((value) => ({
-        label: `${value}\u00d7`,
-        type: 'radio' as const,
-        checked: cfg.scale === value,
-        click: () => patch({ scale: value }),
-      })),
-    },
-    { type: 'separator' },
-    {
-      label: '开机自启',
-      type: 'checkbox',
-      checked: cfg.autostart,
-      click: (item) => {
-        patch({ autostart: item.checked });
-        applyAutostart(item.checked);
-      },
-    },
-    {
-      label: '窗口置顶',
-      type: 'checkbox',
-      checked: cfg.alwaysOnTop,
-      click: (item) => patch({ alwaysOnTop: item.checked }),
-    },
-    {
-      label: '使用电池时降低更新频率',
-      type: 'checkbox',
-      checked: cfg.batterySaver,
-      click: (item) => patch({ batterySaver: item.checked }),
-    },
-    { type: 'separator' },
-    {
-      label: '显示器',
-      submenu: [
-        {
-          label: '自动（当前活动屏）',
-          type: 'radio' as const,
-          checked: cfg.displayId == null,
-          click: () => patch({ displayId: null }),
-        },
-        ...screen.getAllDisplays().map((display, index) => ({
-          label: `显示器 ${index + 1}${display.id === screen.getPrimaryDisplay().id ? '（主）' : ''} · ${display.workArea.width}×${display.workArea.height}`,
-          type: 'radio' as const,
-          checked: cfg.displayId === display.id,
-          click: () => patch({ displayId: display.id, x: null, y: null }),
-        })),
-      ],
-    },
+    { label: '设置中心…', click: () => openSettingsWindow() },
     { type: 'separator' },
     { label: `CalicoPet v${app.getVersion()}`, enabled: false },
     { label: '退出', click: () => app.quit() },
@@ -672,6 +821,7 @@ function handleDisplayChange(): void {
   moveWindowToAnchor(anchor.x, anchor.y);
   win.webContents.send('pet:frame', frameInfo());
   tray?.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+  sendSettingsState();
 }
 
 function createTray(): void {
@@ -733,7 +883,40 @@ function registerIpc(): void {
 
   ipcMain.handle('config:patch', (_e, part: Partial<PetConfig>) => patch(part));
 
+  ipcMain.handle('settings:get-state', () => settingsState());
+  ipcMain.handle('settings:update', (_e, part: Partial<PetConfig>) => {
+    const next = patch(part);
+    const saved = store.saveNow();
+    if (!saved.ok) throw new Error(`配置已应用，但保存失败：${saved.error ?? '未知错误'}`);
+    if (Object.prototype.hasOwnProperty.call(part, 'autostart') && !autostartMatches(next.autostart)) {
+      throw new Error('配置已保存，但系统开机自启未生效，请检查 Windows 启动项权限');
+    }
+    return next;
+  });
+  ipcMain.on('settings:close', () => settingsWin?.close());
+  ipcMain.on('settings:toggle-hidden', () => togglePetVisibility());
+  ipcMain.handle('settings:open-plugins', async () => {
+    const directory = pluginsDirectory();
+    mkdirSync(directory, { recursive: true });
+    return shell.openPath(directory);
+  });
+  ipcMain.handle('settings:open-repository', async () => {
+    await shell.openExternal('https://github.com/CiQian233/desktop-pet');
+  });
+  ipcMain.handle('settings:preview-natural', (_e, key: string) => {
+    if (!NATURAL_ACTION_KEYS.includes(key)) throw new Error('未知自然动作');
+    const target = win;
+    if (!target || target.isDestroyed()) throw new Error('桌宠尚未就绪');
+    if (manuallyHidden) togglePetVisibility();
+    if (store.all().paused) patch({ paused: false });
+    target.webContents.send('pet:previewNatural', key);
+  });
+
   ipcMain.on('app:openMenu', () => popupMenu());
+
+  ipcMain.on('pet:bubble', (_e, payload: { name?: unknown; text?: unknown; kind?: unknown; period?: unknown }) => {
+    showPetBubble(payload);
+  });
 
   ipcMain.on('app:quit', () => app.quit());
 
@@ -2293,6 +2476,213 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     return { pixelCheck: { ...report, capture, carry: { ...carryReport, capture: carryCapture, ok: carryOk }, ok } };
   }
 
+  if (TEST_PROBE === 'natural') {
+    const naturalKeys = process.env.PET_NATURAL_ONLY
+      ? [process.env.PET_NATURAL_ONLY]
+      : ['stretch', 'groom', 'scratch', 'lieDown', 'roll', 'greet', 'wakeUp'];
+    const playedExpression = process.env.PET_NATURAL_AUTO_WAKE === '1'
+      ? '(window.__petTest.ageIdle(27000), true)'
+      : process.env.PET_NATURAL_STARTUP === '1' ? 'true' : 'window.__petTest.playNatural(key)';
+    const results = await js(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      const out = [];
+      for (const key of ${JSON.stringify(naturalKeys)}) {
+        try {
+          const played = ${playedExpression};
+          await wait(180);
+          const start = window.__petTest.animState();
+          let end = start;
+          for (let tick = 0; tick < 30; tick++) {
+            await wait(200);
+            end = window.__petTest.animState();
+            if (end.override === null || end.override === 'blink') break;
+          }
+          out.push({ key, played, startOverride: start.override, endOverride: end.override, persistent: end.persistent === true });
+        } catch (err) {
+          out.push({ key, played: false, error: String(err), stack: err && err.stack ? String(err.stack) : '' });
+        }
+      }
+      return out;
+    })`) as Array<{ key: string; played: boolean; startOverride: string | null; endOverride: string | null; persistent: boolean }>;
+    const baseOk = results.length === naturalKeys.length && results.every((item) =>
+      item.played && item.startOverride === item.key &&
+      (item.endOverride === null || item.endOverride === 'blink') && !item.persistent);
+
+    let previewCheck: Record<string, unknown> | null = null;
+    if (!process.env.PET_NATURAL_ONLY && !process.env.PET_NATURAL_STARTUP && !process.env.PET_NATURAL_AUTO_WAKE) {
+      const settings = openSettingsWindow();
+      if (settings.webContents.isLoading()) {
+        await new Promise<void>((resolve) => settings.webContents.once('did-finish-load', () => resolve()));
+      }
+      const setup = await settings.webContents.executeJavaScript(`(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        document.querySelector('[data-tab="behavior"]').click();
+        const enabled = document.getElementById('setting-natural');
+        enabled.checked = false;
+        enabled.dispatchEvent(new Event('change', { bubbles: true }));
+        await wait(140);
+        return {
+          buttons: [...document.querySelectorAll('[data-natural-preview]')].map((node) => node.dataset.naturalPreview),
+          frequencyDisabled: document.getElementById('setting-natural-frequency').disabled,
+        };
+      })()`, true) as { buttons: string[]; frequencyDisabled: boolean };
+      const randomOff = await js(`() => ({
+        enabled: window.__petTest.naturalState().enabled,
+        frequency: window.__petTest.naturalState().frequency,
+      })`) as { enabled: boolean; frequency: string };
+
+      const previewResults: Array<{ key: string; startOverride: string | null }> = [];
+      for (const key of NATURAL_ACTION_KEYS) {
+        await settings.webContents.executeJavaScript(`document.querySelector('[data-natural-preview="${key}"]').click()`, true);
+        await new Promise((r) => setTimeout(r, 100));
+        const state = await js(`() => window.__petTest.animState()`) as { override: string | null };
+        previewResults.push({ key, startOverride: state.override });
+      }
+
+      await settings.webContents.executeJavaScript(`(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const enabled = document.getElementById('setting-natural');
+        enabled.checked = true;
+        enabled.dispatchEvent(new Event('change', { bubbles: true }));
+        await wait(80);
+        const frequency = document.getElementById('setting-natural-frequency');
+        frequency.value = 'high';
+        frequency.dispatchEvent(new Event('change', { bubbles: true }));
+        await wait(120);
+      })()`, true);
+      const randomHigh = await js(`() => ({
+        enabled: window.__petTest.naturalState().enabled,
+        frequency: window.__petTest.naturalState().frequency,
+      })`) as { enabled: boolean; frequency: string };
+
+      await settings.webContents.executeJavaScript(`(async () => {
+        const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const paused = document.getElementById('setting-paused');
+        paused.checked = true;
+        paused.dispatchEvent(new Event('change', { bubbles: true }));
+        await wait(100);
+        document.querySelector('[data-natural-preview="stretch"]').click();
+      })()`, true);
+      await new Promise((r) => setTimeout(r, 140));
+      const pauseState = await js(`() => window.__petTest.animState()`) as { override: string | null };
+      const pauseRecovery = !store.all().paused && pauseState.override === 'stretch';
+
+      await settings.webContents.executeJavaScript(`(() => {
+        document.getElementById('toggle-hidden').click();
+        document.querySelector('[data-natural-preview="greet"]').click();
+      })()`, true);
+      await new Promise((r) => setTimeout(r, 140));
+      const hiddenState = await js(`() => window.__petTest.animState()`) as { override: string | null };
+      const hiddenRecovery = !manuallyHidden && win?.isVisible() === true && hiddenState.override === 'greet';
+      settings.close();
+
+      const previewOk = setup.buttons.length === NATURAL_ACTION_KEYS.length &&
+        NATURAL_ACTION_KEYS.every((key) => setup.buttons.includes(key)) && setup.frequencyDisabled &&
+        !randomOff.enabled && randomOff.frequency === 'low' && randomHigh.enabled && randomHigh.frequency === 'high' &&
+        previewResults.every((item) => item.startOverride === item.key) && pauseRecovery && hiddenRecovery;
+      previewCheck = { setup, randomOff, previewResults, randomHigh, pauseRecovery, hiddenRecovery, ok: previewOk };
+    }
+    const ok = baseOk && (previewCheck?.ok !== false);
+    return { naturalCheck: { results, previewCheck, ok } };
+  }
+
+  if (TEST_PROBE === 'dialogue') {
+    const settings = openSettingsWindow();
+    if (settings.webContents.isLoading()) {
+      await new Promise<void>((resolve) => settings.webContents.once('did-finish-load', () => resolve()));
+    }
+    const settingsReport = await settings.webContents.executeJavaScript(`(async () => {
+      const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+      document.querySelector('[data-tab="behavior"]').click();
+      const name = document.getElementById('setting-name');
+      name.value = '测试团子';
+      name.dispatchEvent(new Event('change', { bubbles: true }));
+      const personality = document.getElementById('setting-personality');
+      personality.value = 'lively';
+      personality.dispatchEvent(new Event('change', { bubbles: true }));
+      await wait(350);
+      document.querySelector('[data-tab="dnd"]').click();
+      const state = await window.settings.getState();
+      return {
+        name: state.config.petName,
+        personality: state.config.personality,
+        bubbles: state.config.bubblesEnabled,
+        chatter: state.config.randomChatter,
+        visiblePage: document.querySelector('[data-page].active')?.dataset.page ?? '',
+        hasBubbleControls: !!document.getElementById('setting-bubbles') && !!document.getElementById('setting-chatter'),
+      };
+    })()`, true) as {
+      name: string; personality: string; bubbles: boolean; chatter: boolean;
+      visiblePage: string; hasBubbleControls: boolean;
+    };
+    settings.close();
+
+    const samples = await js(`() => ({
+      morning: window.__petTest.dialogueSample('time', 8),
+      night: window.__petTest.dialogueSample('time', 23),
+    })`) as { morning: { period: string }; night: { period: string } };
+    const bubble = ensureBubbleWindow();
+    if (bubble.webContents.isLoading()) {
+      await new Promise<void>((resolve) => bubble.webContents.once('did-finish-load', () => resolve()));
+    }
+    const spoken = await js(`() => window.__petTest.say('startup', 8)`) as { text: string } | null;
+    await new Promise((r) => setTimeout(r, 180));
+    const shown = await bubble.webContents.executeJavaScript(`({
+      name: document.getElementById('bubble-name').textContent,
+      text: document.getElementById('bubble-text').textContent,
+      shown: document.getElementById('bubble-card').classList.contains('show'),
+    })`, true) as { name: string; text: string; shown: boolean };
+    const visible = bubble.isVisible();
+    const bounds = bubble.getContentBounds();
+    const area = activeArea();
+    const inside = bounds.x >= area.x && bounds.y >= area.y &&
+      bounds.x + bounds.width <= area.x + area.width && bounds.y + bounds.height <= area.y + area.height;
+
+    // Force the cat against the top-left work-area corner. The bubble must flip
+    // its tail to the top and keep the horizontal pointer aimed at the cat even
+    // when the 340px card has been clamped to the work area.
+    moveWindowToAnchor(area.x, area.y);
+    const edgeSpoken = await js(`() => window.__petTest.say('time', 8)`) as { text: string } | null;
+    await new Promise((r) => setTimeout(r, 140));
+    const edgeBounds = bubble.getContentBounds();
+    const edgeRect = currentWindowRect();
+    const edge = await bubble.webContents.executeJavaScript(`({
+      label: document.getElementById('bubble-period').textContent,
+      below: document.getElementById('bubble-card').classList.contains('below'),
+      tailX: parseFloat(document.getElementById('bubble-card').style.getPropertyValue('--tail-x')),
+      text: document.getElementById('bubble-text').textContent,
+    })`, true) as { label: string; below: boolean; tailX: number; text: string };
+    const expectedTailX = Math.max(24, Math.min(316,
+      Math.round(edgeRect.x + edgeRect.width / 2 - edgeBounds.x))) - 10;
+    const edgeInside = edgeBounds.x >= area.x && edgeBounds.y >= area.y &&
+      edgeBounds.x + edgeBounds.width <= area.x + area.width && edgeBounds.y + edgeBounds.height <= area.y + area.height;
+    const periodLabel = edge.label === '清晨';
+    const belowPlacement = edge.below;
+    const tailFollows = Number.isFinite(edge.tailX) && Math.abs(edge.tailX - expectedTailX) <= 1;
+
+    patch({ bubblesEnabled: false });
+    await new Promise((r) => setTimeout(r, 100));
+    const hiddenOnDisable = !bubble.isVisible();
+    const blocked = (await js(`() => window.__petTest.say('random', 8)`)) === null;
+    patch({ bubblesEnabled: true, randomChatter: false });
+    await new Promise((r) => setTimeout(r, 100));
+    const randomOff = store.all().randomChatter === false;
+    hideBubble();
+
+    const ok = settingsReport.name === '测试团子' && settingsReport.personality === 'lively' &&
+      settingsReport.bubbles && settingsReport.chatter && settingsReport.visiblePage === 'dnd' &&
+      settingsReport.hasBubbleControls && samples.morning.period === 'morning' && samples.night.period === 'night' &&
+      !!spoken?.text.includes('测试团子') && shown.name === '测试团子' && shown.text === spoken.text &&
+      shown.shown && visible && inside && !!edgeSpoken?.text && edge.text === edgeSpoken.text &&
+      periodLabel && belowPlacement && tailFollows && edgeInside && hiddenOnDisable && blocked && randomOff;
+    return { dialogueCheck: { settings: settingsReport, samples, spoken, shown, visible, inside,
+      periodLabel, belowPlacement, tailFollows, edgeInside, hiddenOnDisable, blocked, randomOff, ok } };
+  }
+
+  if (TEST_PROBE === 'settings') {
+    return runSettingsProbe({ openSettingsWindow, store, autostartMatches, applyAutostart });
+  }
+
   if (TEST_PROBE === 'power') {
     const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
     const read = async () => await js(`() => {
@@ -2425,6 +2815,10 @@ if (!gotLock) {
   });
 
   app.on('will-quit', () => {
+    if (bubbleHideTimer) {
+      clearTimeout(bubbleHideTimer);
+      bubbleHideTimer = null;
+    }
     if (cursorTimer) {
       clearInterval(cursorTimer);
       cursorTimer = null;

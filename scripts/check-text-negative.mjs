@@ -47,7 +47,7 @@ const MOJIBAKE_SCRATCH = 'src/main/zz-guard-mojibake.ts';
 const QUOTE_SCRATCH = 'src/main/zz-guard-quote.ts';
 
 const mojibake = tryInject(MOJIBAKE_SCRATCH, (text) =>
-  text.replace('\u539f\u5730\u5f85\u673a', '\u9358\u71b7\u6e74\u5bf0\u546e\u6e80'),
+  text.replace('\u8bbe\u7f6e\u4e2d\u5fc3', '\u9358\u71b7\u6e74\u5bf0\u546e\u6e80'),
 );
 const quote = tryInject(QUOTE_SCRATCH, (text) =>
   text.replace("label: '\u9000\u51fa'", "label: '\u9000\u51fa"),

@@ -9,7 +9,7 @@ import {
   type PetConfig,
 } from './config-core';
 
-export type { PetConfig, PetMode, PetScale, RoamSpeed } from './config-core';
+export type { PetConfig, PetMode, PetScale, RoamSpeed, PetPersonality, NaturalFrequency } from './config-core';
 
 function configPath(): string {
   return join(app.getPath('userData'), 'pet-config.json');
@@ -62,16 +62,23 @@ export class ConfigStore {
     this.saveTimer = setTimeout(() => this.saveNow(), 400);
   }
 
-  saveNow(): void {
+  saveNow(): { ok: boolean; error?: string; readOnly?: boolean } {
     if (this.saveTimer) {
       clearTimeout(this.saveTimer);
       this.saveTimer = null;
     }
-    if (this.readOnly) return;
+    // Test-only fault injection. Keep it ahead of readOnly so isolated settings
+    // runs can verify the visible failure path without touching a real file.
+    if (process.env.PET_SMOKE_MS && process.env.PET_TEST_SAVE_FAILURE === '1') {
+      return { ok: false, error: 'injected configuration save failure' };
+    }
+    if (this.readOnly) return { ok: true, readOnly: true };
     try {
       saveConfigFile(configPath(), this.data);
+      return { ok: true };
     } catch (err) {
       console.error('[config] save failed:', err);
+      return { ok: false, error: String(err) };
     }
   }
 }

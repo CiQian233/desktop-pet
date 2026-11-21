@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'">
+<title>CalicoPet 设置中心</title>
+<link rel="stylesheet" href="settings.css">
+</head>
+<body>
+  <main class="settings-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">猫</span>
+        <div><strong>CalicoPet</strong><small>设置中心</small></div>
+      </div>
+      <nav id="settings-tabs" aria-label="设置分类">
+        <button class="tab active" data-tab="behavior">行为</button>
+        <button class="tab" data-tab="sound">声音</button>
+        <button class="tab" data-tab="dnd">免打扰</button>
+        <button class="tab" data-tab="performance">性能</button>
+        <button class="tab" data-tab="plugins">插件</button>
+        <button class="tab" data-tab="appearance">外观</button>
+        <button class="tab" data-tab="about">关于</button>
+      </nav>
+      <span id="sidebar-version" class="sidebar-version"></span>
+    </aside>
+
+    <section class="content">
+      <header class="content-header">
+        <div><h1 id="page-title">行为</h1><p id="page-subtitle">安排猫咪的日常活动与互动方式</p></div>
+        <button id="close-settings" class="icon-button" title="关闭设置" aria-label="关闭设置">×</button>
+      </header>
+
+      <div class="pages">
+        <section class="page active" data-page="behavior">
+          <div class="card">
+            <h2>行为模式</h2>
+            <label class="field"><span>日常状态<small>漫游与跟随逻辑保持原有行为</small></span>
+              <select id="setting-mode"><option value="rest">原地待机</option><option value="roam">自由走动</option><option value="follow">跟着鼠标</option></select>
+            </label>
+            <label class="field"><span>走路速度<small>仅影响自由走动</small></span>
+              <select id="setting-speed"><option value="slow">慢</option><option value="normal">中</option><option value="fast">快</option></select>
+            </label>
+            <label class="field"><span>暂停动作<small>冻结当前画面，仍可打开菜单</small></span><input id="setting-paused" type="checkbox"></label>
+            <label class="field"><span>开机自动启动<small>使用当前安装或便携版路径</small></span><input id="setting-autostart" type="checkbox"></label>
+          </div>
+          <div id="identity-settings" class="card">
+            <h2>名字与性格</h2>
+            <label class="field"><span>猫咪名字<small>会显示在气泡标题和台词中，最多 12 个字符</small></span><input id="setting-name" type="text" maxlength="12" autocomplete="off"></label>
+            <label class="field"><span>性格<small>影响迎接、时段台词和随机闲聊的措辞</small></span>
+              <select id="setting-personality"><option value="gentle">温柔</option><option value="lively">活泼</option><option value="aloof">高冷</option></select>
+            </label>
+          </div>
+          <div class="card">
+            <h2>自然动作</h2>
+            <p class="description">随机动作只在静置坐姿且没有拖拽、移动或其他互动时触发。手动预览不受随机开关限制。</p>
+            <div class="field">
+              <span>随机自然动作<small>关闭后仍保留启动迎接、睡醒叫醒和手动预览</small></span>
+              <input id="setting-natural" type="checkbox" />
+            </div>
+            <div class="field">
+              <span>随机频率<small>较低：约 75–120 秒；标准：约 45–75 秒；较高：约 25–45 秒</small></span>
+              <select id="setting-natural-frequency">
+                <option value="low">较低（默认）</option>
+                <option value="normal">标准</option>
+                <option value="high">较高</option>
+              </select>
+            </div>
+            <div class="natural-preview" aria-label="自然动作预览">
+              <button class="secondary" type="button" data-natural-preview="stretch">伸懒腰</button>
+              <button class="secondary" type="button" data-natural-preview="groom">舔毛</button>
+              <button class="secondary" type="button" data-natural-preview="scratch">磨爪</button>
+              <button class="secondary" type="button" data-natural-preview="lieDown">趴下</button>
+              <button class="secondary" type="button" data-natural-preview="roll">翻肚</button>
+              <button class="secondary" type="button" data-natural-preview="greet">迎接</button>
+              <button class="secondary" type="button" data-natural-preview="wakeUp">叫醒</button>
+            </div>
+          </div>
+        </section>
+
+        <section class="page" data-page="sound">
+          <div class="card">
+            <h2>声音</h2>
+            <p class="description">当前版本不播放音效，不提供无效开关。此分类用于集中承接后续声音能力；台词与气泡控制位于「免打扰」。</p>
+            <label class="field muted"><span>互动提示音<small>尚未提供音效播放</small></span><input type="checkbox" disabled></label>
+          </div>
+        </section>
+
+        <section class="page" data-page="dnd">
+          <div class="card">
+            <h2>免打扰</h2>
+            <div class="field"><span>隐藏桌宠<small>不会改写保存的暂停设置</small></span><button id="toggle-hidden" class="secondary"></button></div>
+            <div class="field"><span>锁屏与系统休眠<small>自动停止运动循环，恢复后重新计时</small></span><span class="pill">始终启用</span></div>
+          </div>
+          <div id="bubble-settings" class="card">
+            <h2>气泡与台词</h2>
+            <label class="field"><span>显示气泡<small>总开关，关闭后立即隐藏当前气泡</small></span><input id="setting-bubbles" type="checkbox"></label>
+            <label class="field"><span>低频随机闲聊<small>约 3–5 分钟一次；移动、拖拽和暂停时不主动说话</small></span><input id="setting-chatter" type="checkbox"></label>
+          </div>
+        </section>
+
+        <section class="page" data-page="performance">
+          <div class="card">
+            <h2>性能</h2>
+            <label class="field"><span>电池供电时省电<small>运动更新目标由 60Hz 降为 30Hz</small></span><input id="setting-battery" type="checkbox"></label>
+            <div class="field"><span>静止绘制优化<small>复用遮罩位图，只在画面变化时重绘</small></span><span class="pill">始终启用</span></div>
+          </div>
+        </section>
+
+        <section class="page" data-page="plugins">
+          <div class="card">
+            <div class="card-heading"><h2>插件目录</h2><button id="open-plugins" class="secondary">打开目录</button></div>
+            <p class="description">这里展示 plugins 文件夹内容。外部插件宿主尚未启用，不会加载或执行目录中的代码。</p>
+            <div id="plugin-list" class="plugin-list"></div>
+          </div>
+        </section>
+
+        <section class="page" data-page="appearance">
+          <div class="card">
+            <h2>外观与显示</h2>
+            <label class="field"><span>显示倍率<small>保持原生像素最近邻放大</small></span>
+              <select id="setting-scale"><option value="2">2×</option><option value="3">3×</option><option value="4">4×</option><option value="6">6×</option></select>
+            </label>
+            <label class="field"><span>显示器<small>自动模式遵循当前活动屏幕</small></span><select id="setting-display"></select></label>
+            <label class="field"><span>窗口置顶<small>保持猫咪位于普通窗口上方</small></span><input id="setting-top" type="checkbox"></label>
+          </div>
+        </section>
+
+        <section class="page" data-page="about">
+          <div class="card about-card">
+            <span class="about-mark" aria-hidden="true">猫</span>
+            <h2>CalicoPet</h2>
+            <p id="about-version"></p>
+            <p class="description">一只安静的像素风三花猫。保留原生像素、低打扰交互和本地配置。</p>
+            <button id="open-repository" class="secondary">访问 GitHub 项目</button>
+          </div>
+        </section>
+      </div>
+      <footer><span id="settings-status" role="status">所有设置保存在本机</span></footer>
+    </section>
+  </main>
+  <script type="module" src="settings.js"></script>
+</body>
+</html>

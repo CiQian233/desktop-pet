@@ -22,6 +22,10 @@ $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $logDirFull = (Resolve-Path $LogDir).Path
+$resultsDir = Join-Path $logDirFull 'results'
+Remove-Item $resultsDir -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force -Path $resultsDir | Out-Null
+$script:caseResults = @()
 
 $electron = Join-Path $root 'node_modules\electron\dist\electron.exe'
 if (-not $Exe -and -not (Test-Path $electron)) { throw "electron runtime missing: $electron" }
@@ -123,6 +127,15 @@ $cases = @(
   @{ name = 'display-check'; config = @{}; probe = 'display'; expect = {
       param($d) $d.displayCheck.ok -eq $true -and $d.displayCheck.fixedInside -eq $true -and `
       $d.displayCheck.autoPreserved -eq $true -and $d.displayCheck.clamped -eq $true } },
+  @{ name = 'natural-check'; config = @{}; probe = 'natural'; smokeMs = 40000; expect = {
+      param($d) $d.naturalCheck.ok -eq $true -and $d.naturalCheck.results.Count -ge 1 } },
+  @{ name = 'dialogue-check'; config = @{}; probe = 'dialogue'; smokeMs = 14000; expect = {
+      param($d) $d.dialogueCheck.ok -eq $true -and $d.dialogueCheck.hiddenOnDisable -eq $true -and `
+      $d.dialogueCheck.randomOff -eq $true -and $d.dialogueCheck.periodLabel -eq $true -and `
+      $d.dialogueCheck.belowPlacement -eq $true -and $d.dialogueCheck.tailFollows -eq $true -and $d.dialogueCheck.edgeInside -eq $true } },
+  @{ name = 'settings-check'; config = @{}; probe = 'settings'; smokeMs = 12000; expect = {
+      param($d) $d.settingsCheck.ok -eq $true -and $d.settingsCheck.tabs.Count -eq 7 -and `
+      $d.settingsCheck.restoredScale -eq $d.settingsCheck.beforeScale } },
   @{ name = 'shape-check'; config = @{}; probe = 'shape'; smokeMs = 8000; expect = {
       param($d) $d.shapeCheck.ok -eq $true -and $d.shapeCheck.initialBody -eq $true -and `
       $d.shapeCheck.initialPaddingExcluded -eq $true -and $d.shapeCheck.scaleUpdated -eq $true -and `
@@ -167,6 +180,40 @@ if ($Only) {
   if ($cases.Count -eq 0) { throw "unknown behaviour case: $Only" }
 }
 
+function Save-CaseResult {
+  param(
+    [string]$CaseName,
+    [bool]$Passed,
+    [string]$SummaryText,
+    [string]$LogPath,
+    $Diag = $null
+  )
+  $record = [ordered]@{
+    name = $CaseName
+    passed = $Passed
+    summary = $SummaryText
+    log = $LogPath
+    recordedAt = (Get-Date -Format o)
+    diagnostics = $Diag
+  }
+  $record | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $resultsDir "$CaseName.json") -Encoding UTF8
+  $brief = [pscustomobject]@{ name = $CaseName; passed = $Passed; summary = $SummaryText; log = $LogPath }
+  $script:caseResults = @($script:caseResults) + @($brief)
+  $passedCount = @($script:caseResults | Where-Object { $_.passed }).Count
+  $progress = [ordered]@{
+    total = $cases.Count
+    completed = $script:caseResults.Count
+    passed = $passedCount
+    failed = $script:caseResults.Count - $passedCount
+    complete = $script:caseResults.Count -eq $cases.Count
+    cases = $script:caseResults
+  }
+  $progress | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $logDirFull 'summary.json') -Encoding UTF8
+  $lines = @($script:caseResults | ForEach-Object { "{0}  {1}  {2}" -f $(if ($_.passed) { 'PASS' } else { 'FAIL' }), $_.name, $_.summary })
+  $lines += "completed=$($script:caseResults.Count)/$($cases.Count) passed=$passedCount failed=$($script:caseResults.Count - $passedCount)"
+  $lines | Set-Content -LiteralPath (Join-Path $logDirFull 'summary.txt') -Encoding UTF8
+}
+
 $failures = 0
 foreach ($case in $cases) {
   $log = Join-Path $logDirFull "$($case.name).log"
@@ -208,6 +255,7 @@ foreach ($case in $cases) {
       Get-Content -LiteralPath $log -Encoding UTF8 | ForEach-Object { Write-Host $_ }
       Write-Host "--- end $($case.name) log ---"
     }
+    Save-CaseResult -CaseName $case.name -Passed $false -SummaryText "renderer never reported ready; exit=$($proc.ExitCode); logExists=$(Test-Path $log)" -LogPath $log
     $failures++
     continue
   }
@@ -297,6 +345,7 @@ foreach ($case in $cases) {
       $diag.staleCheck.samples, $diag.staleCheck.maxDriftX, `
       $diag.staleCheck.maxDriftY, $diag.staleCheck.limit
   }
+  Save-CaseResult -CaseName $case.name -Passed ([bool]$ok) -SummaryText $summary -LogPath $log -Diag $diag
   if ($ok) { Write-Host ("PASS  {0,-18} {1}" -f $case.name, $summary) }
   else {
     Write-Host ("FAIL  {0,-18} {1}" -f $case.name, $summary)

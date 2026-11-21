@@ -105,6 +105,22 @@ await step('renderer shell -> dist', async () => {
   }
 });
 
+await step('settings shell -> dist', async () => {
+  const dst = join(RENDERER_OUT, '..', 'settings');
+  await mkdir(dst, { recursive: true });
+  for (const file of ['index.html', 'settings.css']) {
+    await cp(join(ROOT, 'src', 'settings', file), join(dst, file));
+  }
+});
+
+await step('bubble shell -> dist', async () => {
+  const dst = join(RENDERER_OUT, '..', 'bubble');
+  await mkdir(dst, { recursive: true });
+  for (const file of ['index.html', 'bubble.css']) {
+    await cp(join(ROOT, 'src', 'bubble', file), join(dst, file));
+  }
+});
+
 await step('assets/tray.png presence', async () => {
   const p = join(ROOT, 'assets', 'tray.png');
   if (!existsSync(p)) throw new Error('missing assets/tray.png -- run: python tools/make_icons.py');

@@ -11,6 +11,8 @@ import { dirname } from 'node:path';
 export type PetMode = 'rest' | 'roam' | 'follow';
 export type PetScale = 2 | 3 | 4 | 6;
 export type RoamSpeed = 'slow' | 'normal' | 'fast';
+export type PetPersonality = 'gentle' | 'lively' | 'aloof';
+export type NaturalFrequency = 'low' | 'normal' | 'high';
 
 export interface PetConfig {
   configVersion: 1;
@@ -26,6 +28,12 @@ export interface PetConfig {
   alwaysOnTop: boolean;
   displayId: number | null;
   batterySaver: boolean;
+  petName: string;
+  personality: PetPersonality;
+  bubblesEnabled: boolean;
+  randomChatter: boolean;
+  naturalEnabled: boolean;
+  naturalFrequency: NaturalFrequency;
 }
 
 export const DEFAULT_CONFIG: PetConfig = {
@@ -41,6 +49,12 @@ export const DEFAULT_CONFIG: PetConfig = {
   alwaysOnTop: true,
   displayId: null,
   batterySaver: true,
+  petName: '三花',
+  personality: 'gentle',
+  bubblesEnabled: true,
+  randomChatter: true,
+  naturalEnabled: true,
+  naturalFrequency: 'low',
 };
 
 /** Coerce untyped/old JSON into the current schema without trusting its content. */
@@ -61,6 +75,16 @@ export function coerceConfig(raw: unknown): PetConfig {
   if (typeof r.alwaysOnTop === 'boolean') out.alwaysOnTop = r.alwaysOnTop;
   if (typeof r.displayId === 'number' && Number.isFinite(r.displayId)) out.displayId = r.displayId;
   if (typeof r.batterySaver === 'boolean') out.batterySaver = r.batterySaver;
+  if (typeof r.petName === 'string' && r.petName.trim()) out.petName = r.petName.trim().slice(0, 12);
+  if (r.personality === 'gentle' || r.personality === 'lively' || r.personality === 'aloof') {
+    out.personality = r.personality;
+  }
+  if (typeof r.bubblesEnabled === 'boolean') out.bubblesEnabled = r.bubblesEnabled;
+  if (typeof r.randomChatter === 'boolean') out.randomChatter = r.randomChatter;
+  if (typeof r.naturalEnabled === 'boolean') out.naturalEnabled = r.naturalEnabled;
+  if (r.naturalFrequency === 'low' || r.naturalFrequency === 'normal' || r.naturalFrequency === 'high') {
+    out.naturalFrequency = r.naturalFrequency;
+  }
   return out;
 }
 

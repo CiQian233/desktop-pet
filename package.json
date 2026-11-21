@@ -1,30 +1,46 @@
 {
   "name": "desktop-pet",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "private": true,
   "description": "像素风桌面宠物 · 以我家三花猫为形象基底",
   "main": "dist/main/main.js",
   "author": "CiQian233",
   "license": "MIT",
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "sync:assets": "node scripts/sync-assets.mjs",
     "check:text": "node scripts/check-text.mjs",
     "check:text:negative": "node scripts/check-text-negative.mjs",
+    "audit:assets": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check-sprite-assets.ps1",
+    "audit:transitions": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/check-transitions.ps1",
+    "check": "npm run check:text && npm run check:text:negative",
+    "smoke": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1",
+    "verify": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify-behaviour.ps1",
     "test:unit": "npm run build && node --test scripts/config-core.test.mjs",
     "typecheck": "tsc -p tsconfig.main.json && tsc -p tsconfig.renderer.json",
     "build": "npm run check:text && npm run sync:assets && npm run typecheck && node scripts/fix-esm-imports.mjs",
     "watch": "tsc -p tsconfig.main.json --watch",
     "start": "npm run build && electron .",
     "dev": "electron .",
-    "pack:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target portable",
-    "pack:installer": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target installer",
-    "pack:all": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target all"
+    "pack:portable": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target portable",
+    "pack:installer": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target installer",
+    "pack:all": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/pack.ps1 -Target all"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
-    "electron": "^33.2.1",
-    "electron-builder": "^25.1.8",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0",
     "typescript": "^5.7.2"
+  },
+  "overrides": {
+    "app-builder-lib": {
+      "minimatch": "11.0.9"
+    },
+    "@electron/universal": {
+      "minimatch": "11.0.9"
+    }
   },
   "build": {
     "appId": "com.desktop-pet.calico",

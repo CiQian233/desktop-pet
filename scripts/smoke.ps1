@@ -91,7 +91,7 @@ $NATIVE_W = 76
 $NATIVE_H = 68
 $DEFAULT_SCALE = 3
 
-if ($diag.sprites -lt 7) { Write-Host "FAIL: expected 7 animations, got $($diag.sprites)"; exit 1 }
+if ($diag.sprites -lt 14) { Write-Host "FAIL: expected 14 animations, got $($diag.sprites)"; exit 1 }
 if ($diag.canvas.w -le 0 -or $diag.canvas.h -le 0) { Write-Host 'FAIL: canvas has no backing size'; exit 1 }
 $wantW = $NATIVE_W * $DEFAULT_SCALE
 $wantH = $NATIVE_H * $DEFAULT_SCALE
@@ -99,5 +99,5 @@ if ($diag.css.w -ne $wantW -or $diag.css.h -ne $wantH) {
   Write-Host "FAIL: default ${DEFAULT_SCALE}x should render ${wantW}x${wantH}, got $($diag.css.w)x$($diag.css.h)"; exit 1
 }
 if (-not $diag.pos.ground) { Write-Host 'FAIL: pet is not resting on the ground line'; exit 1 }
-Write-Host "PASS: app booted, 7 animations loaded, ${DEFAULT_SCALE}x default, pet grounded."
+Write-Host "PASS: app booted, $($diag.sprites) animations loaded, ${DEFAULT_SCALE}x default, pet grounded."
 exit 0

@@ -1,6 +1,7 @@
 import { SpriteAtlas } from './core/atlas';
 import { Animator } from './core/animator';
 import { PetController, TUNING } from './core/controller';
+import { chooseDialogue, type DialogueKind, type DialogueLine } from './core/dialogue';
 import type { FrameInfo, PetConfig } from './config-types';
 
 const META_URL = 'sprites/pet.json';
@@ -22,6 +23,7 @@ let pet: PetController;
  * on where the physical mouse happened to be.
  */
 let testMode = false;
+let fastIdle = false;
 
 /** the pet window's rectangle in screen coordinates, kept up to date by main */
 let windowRect = { x: 0, y: 0, width: 0, height: 0 };
@@ -156,6 +158,8 @@ interface PetDiagnostics {
   };
   /** roam-mode wander state; present so hopping can be debugged from the log */
   wander?: Record<string, unknown>;
+  dialogue?: { shown: number; lastKind: string; lastPeriod: string; randomScheduled: boolean; enabled: boolean; randomEnabled: boolean };
+  natural?: { played: number; last: string; randomScheduled: boolean; enabled: boolean; frequency: string };
 }
 declare global {
   interface Window {
@@ -183,6 +187,11 @@ declare global {
       home(): { x: number; y: number };
       /** raw animation channel, for diagnosing held/transient poses */
       animState(): unknown;
+      say(kind: DialogueKind, hour?: number): DialogueLine | null;
+      dialogueSample(kind: DialogueKind, hour: number): DialogueLine;
+      playNatural(key: string): boolean;
+      naturalState(): { played: number; last: string; randomScheduled: boolean; enabled: boolean; frequency: string };
+      ageIdle(ms: number): void;
     };
   }
 }
@@ -200,6 +209,7 @@ async function boot(): Promise<void> {
   activityActive = frame.activityActive;
   powerSaving = frame.powerSaving;
   testMode = frame.testMode;
+  fastIdle = frame.fastIdle === true;
   applyFrame(frame);
 
   // The controller works in WORK-AREA (world) coordinates: that is the frame the
@@ -223,6 +233,12 @@ async function boot(): Promise<void> {
   // drive drags or mutate config from the page.
   if (frame.testMode) installTestHook();
   scheduleIdleLife();
+  scheduleRandomChatter();
+  scheduleNaturalActions(true);
+  if (!testMode || frame.forceGreet) {
+    if (atlas.anims.has('greet')) playNatural('greet');
+    if (!testMode) window.setTimeout(() => showDialogue('startup'), 1400);
+  }
   reportPosition(true);
 
   // Produce the first pixels and diagnostics synchronously. On an occluded or
@@ -313,6 +329,84 @@ function scheduleIdleLife(): void {
   }, blinkIn);
 }
 
+let chatterTimer: number | null = null;
+const dialogueStats = { shown: 0, lastKind: '', lastPeriod: '', randomScheduled: false };
+
+function showDialogue(kind: DialogueKind, hour?: number): DialogueLine | null {
+  if (!cfg.bubblesEnabled || cfg.paused || !activityActive) return null;
+  const date = hour == null ? new Date() : new Date(2026, 0, 1, hour);
+  const line = chooseDialogue(cfg, kind, date);
+  window.pet.showBubble({ name: cfg.petName, text: line.text, kind: line.kind, period: line.period });
+  dialogueStats.shown++;
+  dialogueStats.lastKind = line.kind;
+  dialogueStats.lastPeriod = line.period;
+  return line;
+}
+
+function scheduleRandomChatter(): void {
+  if (chatterTimer !== null) {
+    window.clearTimeout(chatterTimer);
+    chatterTimer = null;
+  }
+  dialogueStats.randomScheduled = false;
+  // Automated runs trigger exact lines through the test hook instead of waiting.
+  if (testMode || !cfg.randomChatter || !cfg.bubblesEnabled) return;
+  const delay = 180_000 + Math.random() * 120_000;
+  dialogueStats.randomScheduled = true;
+  chatterTimer = window.setTimeout(() => {
+    chatterTimer = null;
+    if (!cfg.paused && activityActive && !dragging && !pet.isMoving && !anim.isTransient) {
+      showDialogue(Math.random() < 0.5 ? 'time' : 'random');
+    }
+    scheduleRandomChatter();
+  }, delay);
+}
+
+let naturalTimer: number | null = null;
+let wakeTimer: number | null = null;
+const naturalStats = { played: 0, last: '', randomScheduled: false, enabled: true, frequency: 'low' };
+const NATURAL_RANDOM_KEYS = ['stretch', 'groom', 'scratch', 'lieDown', 'roll'];
+
+function playNatural(key: string): boolean {
+  if (!atlas.anims.has(key) || anim.isHeld) return false;
+  anim.playTransient(key);
+  naturalStats.played++;
+  naturalStats.last = key;
+  wakeLoop();
+  return true;
+}
+
+function scheduleNaturalActions(first: boolean): void {
+  if (naturalTimer !== null) {
+    window.clearTimeout(naturalTimer);
+    naturalTimer = null;
+  }
+  naturalStats.randomScheduled = false;
+  naturalStats.enabled = cfg.naturalEnabled;
+  naturalStats.frequency = cfg.naturalFrequency;
+  // Automated runs trigger exact actions through the real preview/test paths;
+  // production scheduling is disabled only when the user turns randomness off.
+  if (testMode || !cfg.naturalEnabled) return;
+  const timing = {
+    low: { first: 22_000, firstJitter: 8_000, next: 75_000, nextJitter: 45_000 },
+    normal: { first: 15_000, firstJitter: 7_000, next: 45_000, nextJitter: 30_000 },
+    high: { first: 8_000, firstJitter: 6_000, next: 25_000, nextJitter: 20_000 },
+  }[cfg.naturalFrequency];
+  const delay = first
+    ? timing.first + Math.random() * timing.firstJitter
+    : timing.next + Math.random() * timing.nextJitter;
+  naturalStats.randomScheduled = true;
+  naturalTimer = window.setTimeout(() => {
+    naturalTimer = null;
+    const choices = NATURAL_RANDOM_KEYS.filter((key) => atlas.anims.has(key));
+    if (!cfg.paused && activityActive && !dragging && !pet.isMoving && !anim.isTransient &&
+        anim.ch.base === 'sit' && choices.length > 0) {
+      playNatural(choices[Math.floor(Math.random() * choices.length)]);
+    }
+    scheduleNaturalActions(false);
+  }, delay);
+}
+
 /** true during the "inhale" half of an idle cycle (drives the tiny breath scaling) */
 let breathing = false;
 
@@ -330,6 +424,20 @@ function updateBaseAnim(): void {
   }
   const idleFor = performance.now() - lastInteraction;
   anim.setBase(idleFor > TUNING.sleepAfterMs ? 'sleep' : 'sit');
+  if (idleFor > TUNING.sleepAfterMs && atlas.anims.has('wakeUp')) {
+    if (wakeTimer === null) {
+      wakeTimer = window.setTimeout(() => {
+        wakeTimer = null;
+        if (!cfg.paused && activityActive && anim.ch.base === 'sleep' && !anim.isTransient) {
+          lastInteraction = performance.now();
+          playNatural('wakeUp');
+        }
+      }, fastIdle ? 60 : 18_000 + Math.random() * 12_000);
+    }
+  } else if (wakeTimer !== null) {
+    window.clearTimeout(wakeTimer);
+    wakeTimer = null;
+  }
   // breathe once per base-animation cycle while sitting still
   breathing = !pet.paused && (anim.ch.cycles & 1) === 1;
 }
@@ -364,6 +472,12 @@ function wireIpc(): void {
     cfg = next;
     pet.paused = next.paused;
     pet.mode = next.mode;
+    if (next.randomChatter !== prev.randomChatter || next.bubblesEnabled !== prev.bubblesEnabled) {
+      scheduleRandomChatter();
+    }
+    if (next.naturalEnabled !== prev.naturalEnabled || next.naturalFrequency !== prev.naturalFrequency) {
+      scheduleNaturalActions(true);
+    }
     if (next.scale !== prev.scale) {
       pet.setScale(next.scale);
       applyScale();
@@ -375,6 +489,13 @@ function wireIpc(): void {
     wakeLoop(next.paused);
     // Pausing deliberately does NOT change the pose or add any badge: the pet
     // simply freezes on whatever frame it is showing.
+  });
+
+  window.pet.onNaturalPreview((key) => {
+    // Explicit previews are user interaction: update idle timing and use the same
+    // Animator path as automatic actions, without changing the random schedule.
+    lastInteraction = performance.now();
+    playNatural(key);
   });
 
   window.pet.onFrame((info) => {
@@ -651,6 +772,14 @@ function installTestHook(): void {
     currentFrame: () => anim.currentFrame(),
     pixelAudit,
     patch: (part: Record<string, unknown>) => window.pet.patch(part),
+    say: (kind: DialogueKind, hour?: number) => showDialogue(kind, hour),
+    dialogueSample: (kind: DialogueKind, hour: number) => chooseDialogue(cfg, kind, new Date(2026, 0, 1, hour)),
+    playNatural: (key: string) => playNatural(key),
+    naturalState: () => ({ ...naturalStats }),
+    ageIdle: (ms: number) => {
+      lastInteraction = performance.now() - ms;
+      wakeLoop(true);
+    },
     home: () => defaultHome(),
     animState: () => ({
       ...anim.ch,
@@ -1255,6 +1384,12 @@ function publishDiagnostics(): void {
       chasing: pet.chasing,
     },
     wander: pet.wanderDebug,
+    dialogue: {
+      ...dialogueStats,
+      enabled: cfg.bubblesEnabled,
+      randomEnabled: cfg.randomChatter,
+    },
+    natural: { ...naturalStats },
     trace: trace.slice(-40),
     diagFrames,
     shape: { rectangles: shapeRectCount, revision: shapeRevision },

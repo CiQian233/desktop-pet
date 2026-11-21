@@ -95,6 +95,132 @@
         "frames/angry_0.png",
         "frames/angry_1.png"
       ]
+    },
+    "stretch": {
+      "label": "伸懒腰",
+      "fps": 7.0,
+      "loop": false,
+      "count": 12,
+      "frames": [
+        "frames/stretch_0.png",
+        "frames/stretch_1.png",
+        "frames/stretch_2.png",
+        "frames/stretch_3.png",
+        "frames/stretch_4.png",
+        "frames/stretch_5.png",
+        "frames/stretch_6.png",
+        "frames/stretch_7.png",
+        "frames/stretch_8.png",
+        "frames/stretch_9.png",
+        "frames/stretch_10.png",
+        "frames/stretch_11.png"
+      ]
+    },
+    "groom": {
+      "label": "舔毛",
+      "fps": 7.0,
+      "loop": false,
+      "count": 11,
+      "frames": [
+        "frames/groom_0.png",
+        "frames/groom_1.png",
+        "frames/groom_2.png",
+        "frames/groom_3.png",
+        "frames/groom_4.png",
+        "frames/groom_5.png",
+        "frames/groom_6.png",
+        "frames/groom_7.png",
+        "frames/groom_8.png",
+        "frames/groom_9.png",
+        "frames/groom_10.png"
+      ]
+    },
+    "scratch": {
+      "label": "磨爪",
+      "fps": 8.0,
+      "loop": false,
+      "count": 6,
+      "frames": [
+        "frames/scratch_0.png",
+        "frames/scratch_1.png",
+        "frames/scratch_2.png",
+        "frames/scratch_3.png",
+        "frames/scratch_4.png",
+        "frames/scratch_5.png"
+      ]
+    },
+    "lieDown": {
+      "label": "趴下",
+      "fps": 5.0,
+      "loop": false,
+      "count": 7,
+      "frames": [
+        "frames/lieDown_0.png",
+        "frames/lieDown_1.png",
+        "frames/lieDown_2.png",
+        "frames/lieDown_3.png",
+        "frames/lieDown_4.png",
+        "frames/lieDown_5.png",
+        "frames/lieDown_6.png"
+      ]
+    },
+    "roll": {
+      "label": "翻肚",
+      "fps": 6.0,
+      "loop": false,
+      "count": 16,
+      "frames": [
+        "frames/roll_0.png",
+        "frames/roll_1.png",
+        "frames/roll_2.png",
+        "frames/roll_3.png",
+        "frames/roll_4.png",
+        "frames/roll_5.png",
+        "frames/roll_6.png",
+        "frames/roll_7.png",
+        "frames/roll_8.png",
+        "frames/roll_9.png",
+        "frames/roll_10.png",
+        "frames/roll_11.png",
+        "frames/roll_12.png",
+        "frames/roll_13.png",
+        "frames/roll_14.png",
+        "frames/roll_15.png"
+      ]
+    },
+    "greet": {
+      "label": "启动迎接",
+      "fps": 7.0,
+      "loop": false,
+      "count": 6,
+      "frames": [
+        "frames/greet_0.png",
+        "frames/greet_1.png",
+        "frames/greet_2.png",
+        "frames/greet_3.png",
+        "frames/greet_4.png",
+        "frames/greet_5.png"
+      ]
+    },
+    "wakeUp": {
+      "label": "睡醒叫醒",
+      "fps": 7.0,
+      "loop": false,
+      "count": 12,
+      "frames": [
+        "frames/wakeUp_0.png",
+        "frames/wakeUp_1.png",
+        "frames/wakeUp_2.png",
+        "frames/wakeUp_3.png",
+        "frames/wakeUp_4.png",
+        "frames/wakeUp_5.png",
+        "frames/wakeUp_6.png",
+        "frames/wakeUp_7.png",
+        "frames/wakeUp_8.png",
+        "frames/wakeUp_9.png",
+        "frames/wakeUp_10.png",
+        "frames/wakeUp_11.png"
+      ]
     }
   }
 }

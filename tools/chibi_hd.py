@@ -33,14 +33,14 @@ def fit_into(c: Canvas, box_w: int, box_h: int) -> Canvas:
         return c
     h = int(ys.max() - ys.min() + 1)
     w = int(xs.max() - xs.min() + 1)
-    if h <= box_h and w <= box_w:
-        return c
-
+    # Re-centre even when no shrink is needed. A hanging pose could already fit
+    # the 64px box while touching the canvas bottom; returning early here left
+    # the final outer outline on the last row and clipped its lower edge.
     from PIL import Image
 
     crop = c.crop_to_content()
     arr = crop.to_array(1)
-    factor = min(box_w / w, box_h / h)
+    factor = min(1.0, box_w / w, box_h / h)
     new_w = max(1, int(round(arr.shape[1] * factor)))
     new_h = max(1, int(round(arr.shape[0] * factor)))
     img = Image.fromarray(arr, mode="RGBA").resize((new_w, new_h), Image.NEAREST)

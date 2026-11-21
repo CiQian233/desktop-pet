@@ -26,6 +26,12 @@ test('legacy config is migrated and invalid values are rejected', () => {
     facing: -1,
     displayId: 42,
     batterySaver: false,
+    petName: '  小团子  ',
+    personality: 'lively',
+    bubblesEnabled: false,
+    randomChatter: false,
+    naturalEnabled: false,
+    naturalFrequency: 'high',
     autostart: 'yes',
     x: Number.POSITIVE_INFINITY,
   });
@@ -36,6 +42,16 @@ test('legacy config is migrated and invalid values are rejected', () => {
   assert.equal(out.facing, -1);
   assert.equal(out.displayId, 42);
   assert.equal(out.batterySaver, false);
+  assert.equal(out.petName, '小团子');
+  assert.equal(out.personality, 'lively');
+  assert.equal(out.bubblesEnabled, false);
+  assert.equal(out.randomChatter, false);
+  assert.equal(out.naturalEnabled, false);
+  assert.equal(out.naturalFrequency, 'high');
+  assert.equal(coerceConfig({ naturalFrequency: 'extreme' }).naturalFrequency, DEFAULT_CONFIG.naturalFrequency);
+  assert.equal(coerceConfig({ naturalEnabled: 'no' }).naturalEnabled, DEFAULT_CONFIG.naturalEnabled);
+  assert.equal(coerceConfig({ petName: '   ' }).petName, DEFAULT_CONFIG.petName);
+  assert.equal(coerceConfig({ personality: 'unknown' }).personality, DEFAULT_CONFIG.personality);
   assert.equal(out.autostart, false);
   assert.equal(out.x, null);
   assert.equal(coerceConfig({ scale: 99 }).scale, DEFAULT_CONFIG.scale);

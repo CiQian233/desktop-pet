@@ -5,12 +5,10 @@
 #   powershell -File scripts/pack.ps1 -Target installer
 #
 # Why this wrapper exists instead of calling electron-builder directly:
-# electron-builder extracts the winCodeSign helper with `7za x`, and that archive
-# contains two macOS symlinks Windows cannot create without elevation. 7za then
-# exits 2 and the build fails, even though the only file actually needed
-# (rcedit-x64.exe) extracted fine. scripts/build-7za-shim.ps1 temporarily
-# replaces 7za.exe with a shim that strips those entries first; this script
-# installs it, packs, and always restores the genuine binary.
+# older electron-builder versions extract winCodeSign with `7za x`; that archive
+# contains macOS symlinks Windows cannot create without elevation. The legacy
+# 7za shim strips those entries and is restored after packaging. Electron-builder
+# 26 no longer depends on 7zip-bin, so its native archive handling is used as-is.
 #
 # NOTE: ASCII-only on purpose (Windows PowerShell 5.1 reads .ps1 as ANSI).
 
@@ -28,7 +26,17 @@ $env:ELECTRON_BUILDER_CACHE = Join-Path $root '.builder-cache'
 $env:ELECTRON_MIRROR = 'https://registry.npmmirror.com/-/binary/electron/'
 $env:ELECTRON_BUILDER_BINARIES_MIRROR = 'https://registry.npmmirror.com/-/binary/electron-builder-binaries/'
 
+# electron-builder 26 starts npm.CMD through Windows PowerShell. Some pwsh-only
+# terminals do not include its directory in PATH; add it for this process only.
+$windowsPowerShellDir = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0'
+if ((Test-Path (Join-Path $windowsPowerShellDir 'powershell.exe')) -and
+    (($env:PATH -split ';') -notcontains $windowsPowerShellDir)) {
+  $env:PATH = "$windowsPowerShellDir;$env:PATH"
+}
+
 $shimScript = Join-Path $PSScriptRoot 'build-7za-shim.ps1'
+$shimDir = Join-Path $root 'node_modules\7zip-bin\win\x64'
+$use7zaShim = Test-Path (Join-Path $shimDir '7za.exe')
 
 $targets = switch ($Target) {
   'portable' { @('portable') }
@@ -37,8 +45,12 @@ $targets = switch ($Target) {
 }
 
 try {
-  Write-Host 'installing 7za shim...'
-  & $shimScript
+  if ($use7zaShim) {
+    Write-Host 'installing legacy 7za shim...'
+    & $shimScript
+  } else {
+    Write-Host '7zip-bin not present; using electron-builder native archive handling.'
+  }
 
   Write-Host 'building app (assets + typecheck)...'
   # npm and electron-builder write progress/warnings to stderr, and with
@@ -69,9 +81,11 @@ try {
 
   if ($buildCode -ne 0) { throw "packaging failed (exit $buildCode)" }
 } finally {
-  Write-Host ''
-  Write-Host 'restoring genuine 7za.exe...'
-  & $shimScript -Restore
+  if ($use7zaShim) {
+    Write-Host ''
+    Write-Host 'restoring genuine 7za.exe...'
+    & $shimScript -Restore
+  }
 }
 
 Write-Host ''

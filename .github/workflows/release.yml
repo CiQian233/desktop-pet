@@ -44,7 +44,7 @@ jobs:
 
       - uses: actions/setup-node@v5
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Install dependencies
@@ -137,5 +137,5 @@ jobs:
             dist/release/SHA256SUMS-*.txt
           # the curated changelog for this tag becomes the release body;
           # generate_release_notes appends the auto-generated section after it
-          body_path: docs/CHANGELOG_${{ github.ref_name }}.md
+          body_path: changelog/${{ github.ref_name }}.md
           generate_release_notes: true

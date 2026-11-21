@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'">
+<title>CalicoPet 气泡</title>
+<link rel="stylesheet" href="bubble.css">
+</head>
+<body>
+  <section id="bubble-card" class="bubble-card" aria-live="polite">
+    <header><span id="bubble-name"></span><span id="bubble-period"></span></header>
+    <p id="bubble-text"></p>
+    <span class="bubble-tail" aria-hidden="true"></span>
+  </section>
+  <script type="module" src="bubble.js"></script>
+</body>
+</html>

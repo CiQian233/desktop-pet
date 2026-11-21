@@ -16,5 +16,5 @@
     "sourceMap": false,
     "types": []
   },
-  "include": ["src/renderer/**/*.ts"]
+  "include": ["src/renderer/**/*.ts", "src/settings/**/*.ts", "src/bubble/**/*.ts"]
 }

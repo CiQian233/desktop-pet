@@ -2,7 +2,7 @@
 
 一只安静的像素风三花猫，住在 Windows 桌面上。Electron + TypeScript 实现，支持待机、自由漫游、鼠标跟随、摸头、双击和拖拽抛掷。
 
-当前版本：**0.3.2**。本版重点修复高 DPI 下快速移动和拖拽时的残影、旧帧重绘与抽搐，将所有动画帧统一为单层连续深黑外描边，并完善多显示器、低打扰、原生透明穿透、配置恢复和发布验证。
+当前版本：**0.4.0**，新增设置中心、可关闭的气泡台词和七种经用户选型的自然动作。完整安装包与便携版已构建并完成本机发布验收。
 
 ## 下载与运行
 
@@ -10,12 +10,12 @@
 
 | 形式 | 文件 | 适合场景 |
 | --- | --- | --- |
-| 便携版 | `dist/portable/CalicoPet-portable-0.3.2.exe` | 免安装，双击即用 |
-| 完整安装包 | `dist/installer/CalicoPet-setup-0.3.2.exe` | 当前用户安装、开始菜单和桌面快捷方式 |
+| 便携版 | `dist/portable/CalicoPet-portable-0.4.0.exe` | 免安装，双击即用 |
+| 完整安装包 | `dist/installer/CalicoPet-setup-0.4.0.exe` | 当前用户安装、开始菜单和桌面快捷方式 |
 
 安装包默认不需要管理员权限。两种形式共用同一套功能；便携版不会在 exe 旁写配置，配置仍保存在当前用户目录中。
 
-GitHub 下载：[CalicoPet v0.3.2 Release](https://github.com/CiQian233/desktop-pet/releases/tag/v0.3.2)。校验文件已生成到 `dist/release/SHA256SUMS-v0.3.2.txt`，并随 Release 上传。
+GitHub 下载：[CalicoPet v0.4.0 Release](https://github.com/CiQian233/desktop-pet/releases/tag/v0.4.0)。校验文件位于 `dist/release-v040/SHA256SUMS.txt`，并随 Release 上传。
 
 当前发布物为**未签名**（NotSigned），Windows 可能显示 SmartScreen“未知发布者”；可使用 SHA-256 核对下载完整性。
 
@@ -26,19 +26,21 @@ GitHub 下载：[CalicoPet v0.3.2 Release](https://github.com/CiQian233/desktop-
 | 单击猫身体 | 摸头 |
 | 快速双击 | 生气 |
 | 长按约 180ms 或移动超过阈值后拖动 | 拎起并移动；松手后落下 |
-| 右键猫身体 | 打开功能菜单 |
+| 右键猫身体 | 打开快捷菜单（暂停、隐藏、设置、退出） |
 | 托盘左键 | 显示隐藏的桌宠；已显示时摸头 |
-| 托盘右键 | 打开完整菜单 |
+| 托盘右键 | 打开同一快捷菜单 |
 
-菜单可切换：
+设置中心包含七个分页：
 
-- 原地待机 / 自由漫游 / 跟随鼠标。
-- 2× / 3× / 4× / 6× 显示倍率，默认 3×。
-- 慢 / 中 / 快三档漫游速度。
-- 暂停 / 继续、隐藏 / 显示桌宠。
-- 自动选择显示器或固定到某台显示器。
-- 总在最前、电池供电时省电、开机自动启动。
-- 摸头、打开说明和退出。
+- 行为：待机 / 漫游 / 跟随、三档速度、暂停、开机自启、猫咪名字和性格；随机自然动作开关、三档频率与七动作手动预览。
+- 声音：说明当前声音能力；v0.4.0 不播放音效，不展示无效开关。
+- 免打扰：隐藏桌宠、气泡总开关和独立随机闲聊开关。
+- 性能：电池供电时降低更新频率。
+- 插件：查看并打开本地目录，不执行目录代码。
+- 外观：2× / 3× / 4× / 6× 倍率、显示器与窗口置顶。
+- 关于：版本与项目地址。
+
+气泡支持时段台词、性格措辞、启动迎接和默认约 3–5 分钟的低频闲聊；尾部会随上下位置和左右边缘调整，时段标签显示具体时间。七种动作经 A/B/C 动态预览由用户选定，随机小动作不会抢占拖拽姿态。设置中心可关闭随机动作、选择较低 / 标准 / 较高频率，并手动预览全部七款动作；保存与开机自启均展示真实执行结果。
 
 暂停会冻结动作和移动，但仍可打开菜单。隐藏、锁屏和系统休眠使用独立运行时状态，不会改写保存的暂停设置。
 
@@ -63,7 +65,7 @@ Windows 上通过原生窗口形状让透明区域向后方窗口穿透；猫身
 
 ## 从源码运行
 
-要求：Windows、Node.js 20+、npm。只有重新导出像素素材时才额外需要 Python、NumPy 和 Pillow，普通构建与运行不需要 Python。
+要求：Windows、Node.js 22.12+、npm。只有重新导出像素素材时才额外需要 Python、NumPy 和 Pillow，普通构建与运行不需要 Python。
 
 ```powershell
 npm ci
@@ -76,30 +78,37 @@ npm run dev
 npm run build          # TypeScript 构建与资源同步
 npm run check          # 源码文本与敏感路径检查
 npm run test:unit      # 配置迁移、原子保存和损坏恢复单元测试
+npm run audit:assets   # 全部 103 帧边界、调色板、轮廓、引用与过渡阈值
+npm run audit:transitions # 原 83 张选定关键帧原生/六倍源图哈希保留检查
 npm run smoke          # 启动、自检、退出
 npm run verify         # 完整行为矩阵
 npm run pack:all       # 便携版 + NSIS 安装包
 ```
 
-`verify` 会启动真实 Electron 窗口。也可用 `scripts/verify-behaviour.ps1 -Only <用例名>` 运行单项；`scripts/verify-native-shape.ps1` 使用 Windows `WindowFromPoint` 验证原生命中。
+`verify` 会启动真实 Electron 窗口。也可用 `scripts/verify-behaviour.ps1 -Only <用例名>` 运行单项；`scripts/verify-native-shape.ps1` 使用 Windows `WindowFromPoint` 验证原生命中。矩阵会逐项写入 `results/<用例>.json`、`summary.json` 和 `summary.txt`。
+
+当前开发链为 Electron 45.4.1、electron-builder 26.18.0、TypeScript 5.9.3；官方 npm audit 为 0 条已知公告。升级只完成开发与运行回归，未制作 v0.4.0 安装包或便携版。
 
 ## 项目结构
 
 ```text
-src/main/                 主进程、托盘、配置、preload 安全桥
+src/main/                 主进程、托盘、配置及各窗口 preload 安全桥
 src/renderer/             渲染、动画、行为、输入与像素遮罩
-art/sprites/chibi-hd/     7 组、33 帧原生动画及来源图
+src/settings/             独立设置中心
+src/bubble/               独立穿透气泡窗口
+art/sprites/chibi-hd/     14 组、103 帧原生动画及来源图（含 20 张新增过渡帧）
 assets/                   应用页面和托盘图标
 scripts/                  构建、测试、打包与发布辅助脚本
 .github/workflows/        Windows CI 与 Release 流程
-docs/                     项目日志、版本更新和签名说明
+docs/                     项目日志、审查记录和签名说明
+changelog/                当前及后续版本更新日志，命名为 vX.Y.Z.md
 ```
 
 应用使用 `contextIsolation`、关闭 `nodeIntegration`，渲染进程通过最小 IPC 桥访问能力。用户原始照片不参与打包。
 
 ## 验证与边界
 
-v0.3.2 开发版已通过配置核心 4 项单元测试和完整 31 项行为矩阵，详见 `docs/CHANGELOG_v0.3.2.md` 与 `docs/PROJECT_LOG.md`。
+v0.4.0 已通过配置核心 **4/4**、开发版及便携发布内容 **34/34** 行为矩阵、103 帧素材与过渡保留审计、Windows 原生命中、便携启动与临时目录清理，以及安装版安装/启动/卸载验收。详见 `changelog/v0.4.0.md`、`docs/PROJECT_LOG.md` 和 `dist/release-v040/verification-summary.json`。v0.3.2 的发布验收记录继续保留在 `docs/CHANGELOG_v0.3.2.md`。
 
 本机自动环境只有一块物理显示器，真实双屏热插拔、混合 DPI，以及真实拔电、锁屏和休眠仍需硬件人工验收；相关自动测试覆盖坐标策略和受控状态切换。自动更新尚未实现。
 

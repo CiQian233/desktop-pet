@@ -16,7 +16,9 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from chibi_hd import Params, chibi  # noqa: E402
+from pixel import Canvas
+from chibi_hd import Params, chibi
+from natural_frames import NATURAL_ANIMS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "art" / "sprites" / "chibi-hd"
@@ -87,12 +89,13 @@ ANIMS: dict[str, tuple[str, float, bool, list[Params]]] = {
         Params(mood="angry", tail_swing=0.6),
     ]),
 }
+ANIMS.update(NATURAL_ANIMS)
 
 
 def export() -> dict:
     OUT.mkdir(parents=True, exist_ok=True)
     for stale in OUT.glob("*.png"):
-        if stale.name.startswith("_") or stale.name == "walk_strip.png":
+        if stale.name.startswith("_"):
             continue          # keep dev/diagnostic images
         stale.unlink()
 
@@ -108,7 +111,7 @@ def export() -> dict:
     for key, (label, fps, loop, poses) in ANIMS.items():
         urls = []
         for i, p in enumerate(poses):
-            canvas = chibi(p)
+            canvas = p if isinstance(p, Canvas) else chibi(p)
             name = f"{key}_{i}.png"
             Image.fromarray(canvas.to_array(SCALE), mode="RGBA").save(OUT / name)
             Image.fromarray(canvas.to_array(1), mode="RGBA").save(OUT / f"{key}_{i}@1x.png")
@@ -127,7 +130,7 @@ def export() -> dict:
         shutil.rmtree(fdir)
     fdir.mkdir(parents=True, exist_ok=True)
     for png in OUT.glob("*.png"):
-        if "@1x" in png.name or png.name in ("sheet.png", "walk_strip.png"):
+        if "@1x" in png.name or png.name == "sheet.png":
             continue
         shutil.copy2(png, fdir / png.name)
     return meta
