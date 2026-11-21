@@ -238,9 +238,8 @@ def chibi(p: Params) -> Canvas:
         if y < ty0 + (ty1 - ty0) * 0.28:
             cur = c.grid[y][x]
             c.put(x, y, {"k": "K", "K": "K", "o": "O", "O": "O"}.get(cur, cur))
-    edge = tail & ~_erode(tail)
-    for y, x in zip(*np.nonzero(edge)):
-        c.put(x, y, "i")
+    # Do not pre-ink the exposed tail edge. The final unified outer outline
+    # draws it once; an additional `i` rim here produced a double dark stripe.
 
     # ---------------- body -------------------------------------------
     # A sitting cat is a squat blob; a cat held up by the scruff hangs as a longer,
@@ -351,8 +350,20 @@ def chibi(p: Params) -> Canvas:
                                     base_y - 2.4, 1.9, 3.4)
         for y, x in zip(*np.nonzero(inner)):
             c.put(x, y, "p")
+        # Keep a little ink where the ear joins the skull, but do NOT darken
+        # the exposed outer edge. The base fur already defines that silhouette;
+        # painting `i` all around it and then adding the outer outline produced
+        # the narrow dark stripes circled by the user at desktop scale.
         ear_edge = ear & ~_erode(ear)
-        for y, x in zip(*np.nonzero(ear_edge)):
+        near_head = np.zeros((H, W), dtype=bool)
+        exposed = np.zeros((H, W), dtype=bool)
+        solid = ear | head
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            near_head |= shift(head, dy, dx)
+            exposed |= ~shift(solid, dy, dx)
+        # A join pixel can also lie on the outside silhouette. Only retain ink
+        # on fully covered joins; every exposed ear-edge pixel keeps its fur.
+        for y, x in zip(*np.nonzero(ear_edge & near_head & ~exposed)):
             c.put(x, y, "i")
 
     ellipse_face(c, head, "W", "W", "W", "w", "w2")
@@ -449,6 +460,11 @@ def chibi(p: Params) -> Canvas:
     if hang > 0.0:
         PAD = 2
         c = fit_into(c, W - PAD * 2, H - PAD * 2)
-        return c.padded(PAD, 0, PAD, 0)
+        c = c.padded(PAD, 0, PAD, 0)
+    elif PAD:
+        c = c.padded(PAD, 0, PAD, 0)
 
-    return c.padded(PAD, 0, PAD, 0) if PAD else c
+    # Replace the old ring on the final raster. Eight-neighbour dilation joins
+    # diagonal corners, giving every frame the same single continuous dark edge.
+    c.unify_outer_outline()
+    return c

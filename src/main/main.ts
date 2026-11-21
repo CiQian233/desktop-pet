@@ -22,10 +22,12 @@ import {
   app,
   ipcMain,
   nativeImage,
+  powerMonitor,
   screen,
+  type Point,
   type Rectangle,
 } from 'electron';
-import { appendFileSync, existsSync } from 'node:fs';
+import { appendFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { ConfigStore, type PetConfig, type PetMode, type PetScale, type RoamSpeed } from './config';
@@ -100,18 +102,59 @@ const store = new ConfigStore();
 let win: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let windowOrigin = { x: 0, y: 0 };
+let latestShape: Rectangle[] = [];
+let shapeVersion = 0;
+const shapeStats = { updates: 0, errors: 0, rectangles: 0 };
+let rendererRecoveryAttempts = 0;
+let lastRendererRecoveryAt = 0;
+let smokeStarted = false;
+let quitting = false;
+/** display used when config.displayId is null (automatic mode) */
+let autoDisplayId: number | null = null;
 
 // ---------------------------------------------------------------------------
 // geometry
 // ---------------------------------------------------------------------------
 
-function activeArea(): Rectangle {
+function activeDisplay(): Electron.Display {
   const cfg = store.all();
-  const display =
-    cfg.displayId != null
-      ? screen.getAllDisplays().find((d) => d.id === cfg.displayId) ?? screen.getPrimaryDisplay()
-      : screen.getPrimaryDisplay();
-  return display.workArea;
+  const displays = screen.getAllDisplays();
+  const primary = screen.getPrimaryDisplay();
+  let display: Electron.Display | undefined;
+  if (cfg.displayId != null) {
+    display = displays.find((d) => d.id === cfg.displayId);
+  } else {
+    if (autoDisplayId != null) display = displays.find((d) => d.id === autoDisplayId);
+    if (!display && cfg.x != null && cfg.y != null) {
+      display = screen.getDisplayNearestPoint({ x: cfg.x, y: cfg.y });
+    }
+    if (!display && win) display = screen.getDisplayMatching(win.getContentBounds());
+  }
+  // A removed display (or one stale saved id) must never leave the pet off-screen.
+  display ??= primary;
+  autoDisplayId = display.id;
+  return display;
+}
+
+function activeArea(): Rectangle {
+  return activeDisplay().workArea;
+}
+
+function clampAnchorToArea(anchorX: number, anchorY: number, area: Rectangle, scale: PetScale): Point {
+  const s = spriteSize(scale);
+  return {
+    x: Math.min(Math.max(anchorX, area.x + s.w / 2), area.x + area.width - s.w / 2),
+    y: Math.min(Math.max(anchorY, area.y + s.h), area.y + area.height),
+  };
+}
+
+/** automatic mode follows the cursor only for follow/drag, never for idle roam */
+function setAutoDisplayFromPoint(point: Point): void {
+  if (store.all().displayId != null) return;
+  const display = screen.getDisplayNearestPoint(point);
+  if (display.id === autoDisplayId) return;
+  autoDisplayId = display.id;
+  win?.webContents.send('pet:frame', frameInfo());
 }
 
 function spriteSize(scale: PetScale): { w: number; h: number } {
@@ -137,31 +180,45 @@ function homeAnchor(area: Rectangle, scale: PetScale): { x: number; y: number } 
  * coordinates.
  *
  * Uses setPosition rather than setBounds: this runs every frame while the pet
- * walks or is dragged, and setBounds re-does a full move+resize which made the
- * window visibly stutter on Windows. The size only changes when the scale does.
+ * walks or is dragged. Windows can retain an invisible, DPI-dependent outer
+ * frame even for a frameless transparent window, so all coordinates in the
+ * renderer contract are CONTENT bounds rather than outer-window bounds.
  *
- * The new origin is ECHOED BACK to the renderer. That is not an optimisation: the
- * renderer converts pointer client coordinates into screen coordinates with the
- * window rectangle it knows, and it only learns about a move when we tell it.
- * Without this echo its copy stayed at the boot position forever -- measured up
- * to 904px away from the real window -- so every hit test was computed at the
- * wrong place and the cat could not be grabbed at all.
+ * Every report carries a sequence number. The renderer draws against the newest
+ * target immediately and ignores older native echoes; this keeps the sprite at a
+ * stable local anchor instead of letting an old echo pull it sideways for one
+ * frame (the visible "ghost"/twitch during fast roam and drag).
  */
-function moveWindowToAnchor(anchorX: number, anchorY: number): void {
+function moveWindowToAnchor(anchorX: number, anchorY: number, seq = 0): void {
   if (!win) return;
   moveStats.requested++;
   const scale = store.all().scale;
   const s = spriteSize(scale);
-  const x = Math.round(anchorX - WINDOW_PAD - s.w / 2);
-  const y = Math.round(anchorY - WINDOW_PAD - s.h);
-  if (x === windowOrigin.x && y === windowOrigin.y) {
+  const { w, h } = windowSize(scale);
+  const anchor = clampAnchorToArea(anchorX, anchorY, activeArea(), scale);
+  const x = Math.round(anchor.x - WINDOW_PAD - s.w / 2);
+  const y = Math.round(anchor.y - WINDOW_PAD - s.h);
+  if (x !== windowOrigin.x || y !== windowOrigin.y) {
+    // Windows adds a DPI-dependent invisible frame even to some frameless
+    // windows. setPosition() addresses that outer frame; the renderer draws in
+    // CONTENT coordinates. Address the content rectangle directly so 150%/175%
+    // scaling cannot introduce a few pixels of relative sprite/window motion.
+    win.setContentBounds({ x, y, width: w, height: h });
+    moveStats.sent++;
+  } else {
     moveStats.deduped++;
-    return;
   }
-  windowOrigin = { x, y };
-  win.setPosition(x, y);
-  moveStats.sent++;
-  win.webContents.send('pet:windowMoved', { x, y });
+  const actual = win.getContentBounds();
+  windowOrigin = { x: actual.x, y: actual.y };
+  // The sequence lets the renderer discard an echo for an older pet position.
+  moveStats.last = { x: actual.x, y: actual.y };
+  win.webContents.send('pet:windowMoved', {
+    x: actual.x,
+    y: actual.y,
+    width: actual.width,
+    height: actual.height,
+    seq,
+  });
 }
 
 function currentWindowRect(): Rectangle {
@@ -193,7 +250,10 @@ function createWindow(): void {
     width: w,
     height: h,
     transparent: true,
+    backgroundColor: '#00000000',
     frame: false,
+    roundedCorners: false,
+    thickFrame: false,
     resizable: false,
     movable: false,
     minimizable: false,
@@ -215,6 +275,9 @@ function createWindow(): void {
     },
   });
 
+  win.setContentSize(w, h);
+  win.setContentBounds({ x, y, width: w, height: h });
+  windowOrigin = { x: win.getContentBounds().x, y: win.getContentBounds().y };
   win.setAlwaysOnTop(cfg.alwaysOnTop, 'screen-saver');
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: false });
   // no input gymnastics needed any more: the window IS the cat
@@ -227,7 +290,7 @@ function createWindow(): void {
 
   win.on('moved', () => {
     if (win) {
-      const b = win.getBounds();
+      const b = win.getContentBounds();
       windowOrigin = { x: b.x, y: b.y };
     }
   });
@@ -248,6 +311,10 @@ function createWindow(): void {
   win.webContents.on('did-fail-load', (_e, code, description, url, isMainFrame) => {
     if (isMainFrame) console.error(`[main] renderer load failed (${code} ${description}): ${url}`);
   });
+  win.webContents.on('did-finish-load', () => {
+    refreshPowerSaving();
+    if (!activityActive) win?.webContents.send('pet:activity', false);
+  });
   void win.loadFile(RENDERER_HTML).catch((err) => {
     console.error('[main] failed to load renderer:', err);
   });
@@ -258,7 +325,25 @@ function createWindow(): void {
 
   win.webContents.on('render-process-gone', (_e, details) => {
     console.error('[main] renderer gone:', details.reason);
+    if (quitting || details.reason === 'clean-exit') return;
+    if (SMOKE_MS > 0 && TEST_PROBE !== 'recovery') return;
+    const now = Date.now();
+    if (now - lastRendererRecoveryAt > 60000) rendererRecoveryAttempts = 0;
+    if (rendererRecoveryAttempts >= 2) {
+      console.error('[main] renderer recovery paused after repeated failures');
+      return;
+    }
+    rendererRecoveryAttempts++;
+    lastRendererRecoveryAt = now;
+    const delay = rendererRecoveryAttempts * 750;
+    console.warn(`[main] recovering renderer in ${delay}ms (attempt ${rendererRecoveryAttempts})`);
+    setTimeout(() => {
+      if (!quitting && win && !win.isDestroyed()) win.webContents.reload();
+    }, delay);
   });
+
+  win.webContents.on('unresponsive', () => console.warn('[main] renderer became unresponsive'));
+  win.webContents.on('responsive', () => console.log('[main] renderer responsive again'));
 
   // surface renderer console output in the main log; a packaged build has no
   // devtools, so this is the only way to see renderer errors
@@ -290,7 +375,10 @@ function createWindow(): void {
     // window is created, so the feed never started and follow fell back to
     // stale window-local pointer events.
     syncCursorPolling();
-    if (SMOKE_MS > 0) startSmokeRun();
+    if (SMOKE_MS > 0 && !smokeStarted) {
+      smokeStarted = true;
+      startSmokeRun();
+    }
   });
 }
 
@@ -303,6 +391,8 @@ function frameInfo(): Record<string, unknown> {
     workArea: area,
     pad: WINDOW_PAD,
     version: app.getVersion(),
+    activityActive,
+    powerSaving,
     /** test hooks are installed only for automated runs, never in normal use */
     testMode: SMOKE_MS > 0 || TEST_PROBE.length > 0,
   };
@@ -333,15 +423,25 @@ function applyConfig(previous: PetConfig, cfg: PetConfig, part: Partial<PetConfi
     }
     if (previous.scale !== cfg.scale) {
       const { w, h } = windowSize(cfg.scale);
-      const b = win.getBounds();
-      win.setBounds({ x: b.x, y: b.y, width: w, height: h });
+      const b = win.getContentBounds();
+      win.setContentBounds({ x: b.x, y: b.y, width: w, height: h });
+      // The old native region must not clip the resized frame while the renderer
+      // builds its new mask. The next pet:setShape message replaces this rectangle.
+      win.setShape([{ x: 0, y: 0, width: w, height: h }]);
+      latestShape = [];
     }
     win.webContents.send('config:changed', { ...cfg });
+    if (previous.displayId !== cfg.displayId && cfg.displayId != null) {
+      const home = homeAnchor(activeArea(), cfg.scale);
+      moveWindowToAnchor(home.x, home.y);
+      win.webContents.send('pet:recenter', frameInfo());
+    }
   }
   tray?.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate()));
   // Idempotent, and only relevant when mode or paused changed; keeping the call
   // unconditional here avoids duplicating the eligibility rules in two places.
   syncCursorPolling();
+  refreshPowerSaving();
 }
 
 // ---------------------------------------------------------------------------
@@ -359,7 +459,7 @@ let lastCursorSent = { x: NaN, y: NaN };
 /** diagnostics: how many cursor samples were read and actually delivered */
 const cursorStats = { polls: 0, sent: 0, skipped: 0 };
 /** diagnostics: window moves requested vs. echoed to the renderer */
-const moveStats = { requested: 0, sent: 0, deduped: 0 };
+const moveStats = { requested: 0, sent: 0, deduped: 0, last: { x: 0, y: 0 } };
 
 function pushCursor(): void {
   cursorStats.polls++;
@@ -368,6 +468,7 @@ function pushCursor(): void {
     return;
   }
   const p = screen.getCursorScreenPoint();
+  setAutoDisplayFromPoint(p);
   if (p.x === lastCursorSent.x && p.y === lastCursorSent.y) {
     cursorStats.skipped++;
     return;
@@ -380,7 +481,7 @@ function pushCursor(): void {
 /** follow needs a live cursor; other modes get it from the window's own events */
 function syncCursorPolling(): void {
   const cfg = store.all();
-  const needs = cfg.mode === 'follow' && !cfg.paused;
+  const needs = cfg.mode === 'follow' && !cfg.paused && activityActive;
   if (needs && !cursorTimer) {
     cursorTimer = setInterval(pushCursor, 40);
     pushCursor();
@@ -389,6 +490,44 @@ function syncCursorPolling(): void {
     cursorTimer = null;
     lastCursorSent = { x: NaN, y: NaN };
   }
+}
+
+// Background activity is separate from the user's persisted pause setting. A
+// hidden/locked/sleeping desktop must stop timers without changing cfg.paused.
+let manuallyHidden = false;
+let screenLocked = false;
+let systemSuspended = false;
+let activityActive = true;
+let powerSaving = false;
+
+function syncActivity(): void {
+  const next = !manuallyHidden && !screenLocked && !systemSuspended;
+  if (next === activityActive) return;
+  activityActive = next;
+  if (win && !win.isDestroyed()) win.webContents.send('pet:activity', next);
+  syncCursorPolling();
+}
+
+function refreshTrayMenu(): void {
+  tray?.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate()));
+}
+
+function togglePetVisibility(): void {
+  manuallyHidden = !manuallyHidden;
+  syncActivity();
+  if (manuallyHidden) win?.hide();
+  else win?.showInactive();
+  refreshTrayMenu();
+}
+
+function applyPowerSaving(enabled: boolean): void {
+  if (enabled === powerSaving) return;
+  powerSaving = enabled;
+  if (win && !win.isDestroyed()) win.webContents.send('pet:powerSaving', enabled);
+}
+
+function refreshPowerSaving(): void {
+  applyPowerSaving(store.all().batterySaver && powerMonitor.isOnBatteryPower());
 }
 
 function togglePaused(): void {
@@ -442,6 +581,7 @@ function buildMenuTemplate(): MenuItemConstructorOptions[] {
 
   return [
     { label: cfg.paused ? '继续动作' : '暂停动作', click: () => togglePaused() },
+    { label: manuallyHidden ? '显示桌宠' : '隐藏桌宠', click: () => togglePetVisibility() },
     { type: 'separator' },
     {
       label: '行为模式',
@@ -486,15 +626,29 @@ function buildMenuTemplate(): MenuItemConstructorOptions[] {
       checked: cfg.alwaysOnTop,
       click: (item) => patch({ alwaysOnTop: item.checked }),
     },
+    {
+      label: '使用电池时降低更新频率',
+      type: 'checkbox',
+      checked: cfg.batterySaver,
+      click: (item) => patch({ batterySaver: item.checked }),
+    },
     { type: 'separator' },
     {
-      label: '移到主显示器',
-      click: () => {
-        // clears the remembered position, so the pet restarts on the target
-        // display instead of at coordinates that belonged to the old one
-        patch({ displayId: screen.getPrimaryDisplay().id, x: null, y: null });
-        switchToPrimaryDisplay();
-      },
+      label: '显示器',
+      submenu: [
+        {
+          label: '自动（当前活动屏）',
+          type: 'radio' as const,
+          checked: cfg.displayId == null,
+          click: () => patch({ displayId: null }),
+        },
+        ...screen.getAllDisplays().map((display, index) => ({
+          label: `显示器 ${index + 1}${display.id === screen.getPrimaryDisplay().id ? '（主）' : ''} · ${display.workArea.width}×${display.workArea.height}`,
+          type: 'radio' as const,
+          checked: cfg.displayId === display.id,
+          click: () => patch({ displayId: display.id, x: null, y: null }),
+        })),
+      ],
     },
     { type: 'separator' },
     { label: `CalicoPet v${app.getVersion()}`, enabled: false },
@@ -502,27 +656,32 @@ function buildMenuTemplate(): MenuItemConstructorOptions[] {
   ];
 }
 
-/**
- * Put the pet on the configured display's home corner and tell the renderer.
- *
- * There is deliberately NO "back to the bottom-right corner" menu item any more:
- * it was removed at the user's request after it kept appearing to do nothing.
- * The pet's position is persisted, so a menu item that only moved the window was
- * undone by the next report anyway.
- */
-function switchToPrimaryDisplay(): void {
-  const area = activeArea();
+/** Re-clamp both native window and renderer after DPI/display topology changes. */
+function handleDisplayChange(): void {
+  if (!win) return;
   const cfg = store.all();
-  const home = homeAnchor(area, cfg.scale);
-  moveWindowToAnchor(home.x, home.y);
-  win?.webContents.send('pet:recenter', frameInfo());
+  const area = activeArea();
+  const bounds = win.getContentBounds();
+  const s = spriteSize(cfg.scale);
+  const anchor = clampAnchorToArea(
+    bounds.x + WINDOW_PAD + s.w / 2,
+    bounds.y + WINDOW_PAD + s.h,
+    area,
+    cfg.scale,
+  );
+  moveWindowToAnchor(anchor.x, anchor.y);
+  win.webContents.send('pet:frame', frameInfo());
+  tray?.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate()));
 }
 
 function createTray(): void {
   tray = new Tray(trayImage());
   tray.setToolTip('桌宠猫咪 · 左键摸头 / 右键菜单');
   tray.setContextMenu(Menu.buildFromTemplate(buildMenuTemplate()));
-  tray.on('click', () => win?.webContents.send('pet:pat'));
+  tray.on('click', () => {
+    if (manuallyHidden) togglePetVisibility();
+    else win?.webContents.send('pet:pat');
+  });
 }
 
 function popupMenu(): void {
@@ -536,8 +695,37 @@ function popupMenu(): void {
 
 function registerIpc(): void {
   /** the renderer tells us where the pet's feet are (work-area coordinates) */
-  ipcMain.on('pet:pos', (_e, pos: { x: number; y: number }) => {
-    moveWindowToAnchor(pos.x, pos.y);
+  ipcMain.on('pet:pos', (_e, pos: { x: number; y: number; seq?: number; displayPoint?: Point }) => {
+    if (pos.displayPoint) setAutoDisplayFromPoint(pos.displayPoint);
+    moveWindowToAnchor(pos.x, pos.y, pos.seq ?? 0);
+  });
+
+  // Native hit region: outside these rectangles Windows delivers input to the
+  // window behind the pet. Rectangles arrive in content-local DIP coordinates.
+  ipcMain.on('pet:setShape', (_e, rects: Rectangle[]) => {
+    if (!win || win.isDestroyed() || !Array.isArray(rects) || rects.length > 3000) return;
+    const bounds = win.getContentBounds();
+    const clean: Rectangle[] = [];
+    for (const r of rects) {
+      if (![r.x, r.y, r.width, r.height].every(Number.isFinite)) continue;
+      const x0 = Math.max(0, Math.floor(r.x));
+      const y0 = Math.max(0, Math.floor(r.y));
+      const x1 = Math.min(bounds.width, Math.ceil(r.x + r.width));
+      const y1 = Math.min(bounds.height, Math.ceil(r.y + r.height));
+      if (x1 > x0 && y1 > y0) clean.push({ x: x0, y: y0, width: x1 - x0, height: y1 - y0 });
+    }
+    if (clean.length === 0) return;
+    try {
+      win.setShape(clean);
+      latestShape = clean;
+      shapeVersion++;
+      shapeStats.updates++;
+      shapeStats.rectangles = clean.length;
+    } catch (err) {
+      shapeStats.errors++;
+      console.error('[main] native window shape failed:', err);
+      win.setShape([{ x: 0, y: 0, width: bounds.width, height: bounds.height }]);
+    }
   });
 
   /** the renderer reports its sprite size so the window can be sized to match */
@@ -558,7 +746,7 @@ function registerIpc(): void {
    * measures the pet's travel rather than the lag.
    */
   ipcMain.on('pet:realBounds', (e) => {
-    e.returnValue = win?.getBounds() ?? null;
+    e.returnValue = win?.getContentBounds() ?? null;
   });
 
   // window resized under us (scale change completed) -> tell the renderer
@@ -605,7 +793,7 @@ function startSmokeRun(): void {
             return;
           }
           console.log('[smoke] renderer ready:', JSON.stringify(diag));
-          console.log('[smoke] window bounds:', JSON.stringify(win?.getBounds()));
+          console.log('[smoke] window bounds:', JSON.stringify(win?.getContentBounds()));
           setTimeout(() => app.quit(), 300);
         } else if (Date.now() > deadline) {
           console.error('[smoke] renderer never became ready within', SMOKE_MS, 'ms');
@@ -697,7 +885,7 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
   // "window": the window must track the pet and just contain it. This is what
   // makes clicks land on the cat without any click-through machinery.
   if (TEST_PROBE === 'window') {
-    const bounds = win!.getBounds();
+    const bounds = win!.getContentBounds();
     const s = spriteSize(store.all().scale);
     return {
       windowCheck: {
@@ -722,7 +910,7 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     const samples: number[] = [];
     const ySamples: number[] = [];
     const timer = setInterval(() => {
-      const b = win?.getBounds();
+      const b = win?.getContentBounds();
       if (b) {
         samples.push(b.x);
         ySamples.push(b.y);
@@ -961,7 +1149,7 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
       followCheck: {
         legs,
         ok: legs.every((l) => l.reached === true),
-        windowBounds: win!.getBounds(),
+        windowBounds: win!.getContentBounds(),
       },
     };
   }
@@ -1440,7 +1628,7 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
             windowMoved?: { count: number; last: { x: number; y: number } };
           }
         | null;
-      const real = win?.getBounds();
+      const real = win?.getContentBounds();
       if (!d?.windowRect || !real) continue;
       rows.push({
         renderer: { x: d.windowRect.x, y: d.windowRect.y },
@@ -1558,7 +1746,7 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
   // rectangle where it says "yes". Direct way to catch an offset between the
   // drawn cat and the clickable area.
   if (TEST_PROBE === 'hitgrid') {
-    const bounds = win!.getBounds();
+    const bounds = win!.getContentBounds();
     const res = (await js(`(() => {
       const t = window.__petTest;
       if (!t) return null;
@@ -1677,6 +1865,535 @@ async function runProbe(diag: SmokeDiag): Promise<Record<string, unknown>> {
     };
   }
 
+  if (TEST_PROBE === 'gesture') {
+    const result = await js(`async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const t = window.__petTest;
+      const canvas = document.getElementById('pet');
+      const fire = (type, x, y) => {
+        const info = t.info();
+        canvas.dispatchEvent(new PointerEvent(type, {
+          bubbles: true, cancelable: true, pointerId: 7, isPrimary: true,
+          button: 0, buttons: type === 'pointerup' ? 0 : 1,
+          clientX: x - info.windowRect.x, clientY: y - info.windowRect.y,
+          screenX: x, screenY: y,
+        }));
+      };
+      const point = () => {
+        const info = t.info();
+        return { x: Math.round(info.pet.x), y: Math.round(info.pet.y - 60) };
+      };
+      const history = (mark) => t.animState().history.slice(mark).map((h) => h.override).filter(Boolean);
+      await t.patch({ paused: false });
+      await sleep(900);
+
+      let p = point();
+      let mark = t.animState().history.length;
+      fire('pointerdown', p.x, p.y); fire('pointerup', p.x, p.y);
+      await sleep(40);
+      const clickHadNoImmediateCarry = t.animState().override !== 'carry' && !t.animState().dragging;
+      await sleep(340);
+      const single = history(mark);
+      await sleep(850);
+
+      p = point(); mark = t.animState().history.length;
+      fire('pointerdown', p.x, p.y); fire('pointerup', p.x, p.y);
+      await sleep(60);
+      fire('pointerdown', p.x, p.y); fire('pointerup', p.x, p.y);
+      await sleep(340);
+      const double = history(mark);
+      await sleep(900);
+
+      p = point(); mark = t.animState().history.length;
+      fire('pointerdown', p.x, p.y);
+      fire('pointermove', p.x + 90, p.y - 60);
+      await sleep(40);
+      fire('pointerup', p.x + 90, p.y - 60);
+      await sleep(80);
+      const drag = history(mark);
+
+      await t.patch({ paused: true }); await sleep(60);
+      mark = t.animState().history.length;
+      t.trayPat(); await sleep(340);
+      const pausedTray = history(mark);
+
+      await t.patch({ paused: false }); await sleep(60);
+      p = point();
+      fire('pointerdown', p.x, p.y);
+      fire('pointermove', p.x + 80, p.y - 40);
+      await sleep(40);
+      await t.patch({ paused: true }); await sleep(80);
+      const pauseEndedDrag = !t.animState().dragging;
+      fire('pointerup', p.x + 80, p.y - 40);
+      await t.patch({ paused: false });
+
+      const ok = clickHadNoImmediateCarry &&
+        single.length === 1 && single[0] === 'pat' &&
+        double.length === 1 && double[0] === 'angry' &&
+        drag.includes('carry') && !drag.includes('pat') && !drag.includes('angry') &&
+        pausedTray.length === 0 && pauseEndedDrag;
+      return { clickHadNoImmediateCarry, single, double, drag, pausedTray, pauseEndedDrag, ok };
+    }`);
+    return { gestureCheck: result };
+  }
+
+  if (TEST_PROBE === 'perf') {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const read = async () => await js(`() => {
+      const i = window.__petTest.info();
+      return { loops: i.activity.loopCount, perf: i.perf, shape: i.shape };
+    }`) as {
+      loops: number;
+      perf: { draws: number; maskBuilds: number; positionReports: number };
+      shape: { rectangles: number; revision: number };
+    };
+    await js('window.__petTrace = false;');
+    applyPowerSaving(false);
+    await wait(400);
+    const idle0 = await read();
+    await wait(1100);
+    const idle1 = await read();
+
+    await js('async () => { await window.__petTest.patch({ paused: true }); }');
+    await wait(150);
+    const paused0 = await read();
+    await wait(300);
+    const paused1 = await read();
+
+    await js('async () => { await window.__petTest.patch({ paused: false, mode: "roam" }); window.__petTrace = true; }');
+    applyPowerSaving(false);
+    await wait(400);
+    const motion0 = await read();
+    await wait(1000);
+    const motion1 = await read();
+
+    applyPowerSaving(true);
+    await wait(200);
+    const saver0 = await read();
+    await wait(1000);
+    const saver1 = await read();
+    applyPowerSaving(false);
+    await js('window.__petTrace = false;');
+
+    const idleLoops = idle1.loops - idle0.loops;
+    const idleDraws = idle1.perf.draws - idle0.perf.draws;
+    const normalLoops = motion1.loops - motion0.loops;
+    const saverLoops = saver1.loops - saver0.loops;
+    const maskBuilds = motion1.perf.maskBuilds - motion0.perf.maskBuilds;
+    const shapeUpdates = motion1.shape.revision - motion0.shape.revision;
+    const positionReports = motion1.perf.positionReports - motion0.perf.positionReports;
+    const pausedStable = paused1.loops === paused0.loops;
+    const maskEfficient = maskBuilds <= Math.max(4, Math.ceil(normalLoops / 3));
+    const result = {
+      idleLoops,
+      idleDraws,
+      pausedStable,
+      normalLoops,
+      saverLoops,
+      maskBuilds,
+      shapeUpdates,
+      positionReports,
+      maskEfficient,
+      idleBounded: idleLoops <= 15 && idleDraws <= idleLoops + 1,
+      normal60Hz: normalLoops >= 40 && normalLoops <= 75,
+      saver30Hz: saverLoops >= 18 && saverLoops <= 45 && saverLoops < normalLoops * 0.8,
+      shapeBounded: shapeUpdates <= normalLoops,
+      reportsBounded: positionReports <= normalLoops + 3,
+    };
+    const ok = pausedStable && maskEfficient && result.idleBounded && result.normal60Hz &&
+      result.saver30Hz && result.shapeBounded && result.reportsBounded;
+    return { perfCheck: { ...result, ok } };
+  }
+
+  if (TEST_PROBE === 'recovery') {
+    const wc = win!.webContents;
+    const reloaded = new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), 12000);
+      wc.once('did-finish-load', () => {
+        clearTimeout(timer);
+        resolve(true);
+      });
+    });
+    wc.debugger.attach('1.3');
+    void wc.debugger.sendCommand('Page.crash').catch(() => {
+      // The target disappears before CDP can acknowledge Page.crash.
+    });
+    const didReload = await reloaded;
+    let ready = false;
+    for (let i = 0; i < 30 && !ready; i++) {
+      await new Promise((r) => setTimeout(r, 150));
+      try {
+        const next = await js('window.__petDiag ?? null') as SmokeDiag | null;
+        ready = next?.ready === true;
+      } catch {
+        // Renderer is still being recreated.
+      }
+    }
+    return {
+      recoveryCheck: {
+        didReload,
+        ready,
+        attempts: rendererRecoveryAttempts,
+        ok: didReload && ready && rendererRecoveryAttempts === 1,
+      },
+    };
+  }
+
+  if (TEST_PROBE === 'shape') {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const inside = (rects: Rectangle[], x: number, y: number) => rects.some((r) =>
+      x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height);
+    const snapshot = () => ({
+      version: shapeVersion,
+      rects: latestShape.map((r) => ({ ...r })),
+      bounds: win!.getContentBounds(),
+      stats: { ...shapeStats },
+    });
+    await wait(350);
+    const initial = snapshot();
+    const scale3 = store.all().scale;
+    const body3 = { x: WINDOW_PAD + 38 * scale3, y: WINDOW_PAD + 45 * scale3 };
+    const initialBody = inside(initial.rects, body3.x, body3.y);
+    const initialPaddingExcluded = !inside(initial.rects, 1, 1);
+    const initialBounded = initial.rects.every((r) =>
+      r.x >= 0 && r.y >= 0 && r.x + r.width <= initial.bounds.width && r.y + r.height <= initial.bounds.height);
+
+    patch({ scale: 4 });
+    await wait(450);
+    const scaled = snapshot();
+    const body4 = { x: WINDOW_PAD + 38 * 4, y: WINDOW_PAD + 45 * 4 };
+    const scaleUpdated = scaled.version > initial.version && scaled.bounds.width === 76 * 4 + WINDOW_PAD * 2 &&
+      scaled.bounds.height === 68 * 4 + WINDOW_PAD * 2;
+    const scaledBody = inside(scaled.rects, body4.x, body4.y);
+    patch({ scale: 3 });
+    await wait(350);
+    const restored = snapshot();
+    const result = {
+      rectangles: initial.rects.length,
+      scaledRectangles: scaled.rects.length,
+      initialBody,
+      initialPaddingExcluded,
+      initialBounded,
+      scaleUpdated,
+      scaledBody,
+      restored: restored.version > scaled.version,
+      errors: shapeStats.errors,
+    };
+    const ok = result.rectangles > 3 && result.rectangles <= 3000 && initialBody &&
+      initialPaddingExcluded && initialBounded && scaleUpdated && scaledBody &&
+      result.restored && shapeStats.errors === 0;
+    return { shapeCheck: { ...result, ok } };
+  }
+
+  if (TEST_PROBE === 'pixels') {
+    // Capture the REAL backing store at the current DPI. Besides checking the
+    // source dimensions, this rejects interpolated alpha/colours and leaves a
+    // PNG for human inspection. It runs only in an isolated smoke instance.
+    await new Promise((r) => setTimeout(r, 350));
+    const capturePixels = async () => (await js(`() => {
+      const t = window.__petTest;
+      const frame = t && t.currentFrame();
+      const canvas = document.querySelector('canvas');
+      if (!frame || !canvas) return { error: 'missing frame or canvas' };
+      const ctx = canvas.getContext('2d');
+      const output = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+      const composition = t.pixelAudit();
+      const source = document.createElement('canvas');
+      source.width = frame.naturalWidth;
+      source.height = frame.naturalHeight;
+      const sctx = source.getContext('2d');
+      sctx.imageSmoothingEnabled = false;
+      sctx.drawImage(frame, 0, 0);
+      const input = sctx.getImageData(0, 0, source.width, source.height).data;
+      const sw = source.width, sh = source.height;
+      const colourAt = (x, y) => {
+        if (x < 0 || x >= sw || y < 0 || y >= sh) return -1;
+        const i = (y * sw + x) * 4;
+        if (input[i + 3] === 0) return -1;
+        return (input[i] << 16) | (input[i + 1] << 8) | input[i + 2];
+      };
+      let exposedEarRim = 0;
+      for (let y = 0; y < Math.min(28, sh); y++) {
+        for (let x = 0; x < sw; x++) {
+          if ((x >= 30 && x <= 42) || colourAt(x, y) !== 0x181411) continue;
+          if ([[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]].some(([nx, ny]) => colourAt(nx, ny) === -1)) {
+            exposedEarRim++;
+          }
+        }
+      }
+      const ink = 0x1e1915, whisker = 0xd6cec2;
+      const art = new Uint8Array(sw * sh);
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const colour = colourAt(x, y);
+          if (colour !== -1 && colour !== ink && colour !== whisker) art[y * sw + x] = 1;
+        }
+      }
+      // Flood only the background connected to the canvas exterior. This lets
+      // the check distinguish the requested outer ring from internal pinholes.
+      const exterior = new Uint8Array(sw * sh);
+      const flood = [];
+      const addExterior = (x, y) => {
+        if (x < 0 || x >= sw || y < 0 || y >= sh) return;
+        const at = y * sw + x;
+        if (!art[at] && !exterior[at]) {
+          exterior[at] = 1;
+          flood.push(at);
+        }
+      };
+      for (let x = 0; x < sw; x++) { addExterior(x, 0); addExterior(x, sh - 1); }
+      for (let y = 0; y < sh; y++) { addExterior(0, y); addExterior(sw - 1, y); }
+      while (flood.length) {
+        const at = flood.pop();
+        const x = at % sw, y = Math.floor(at / sw);
+        addExterior(x - 1, y); addExterior(x + 1, y);
+        addExterior(x, y - 1); addExterior(x, y + 1);
+      }
+      let exposedNonOutline = 0, internalOutline = 0;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const at = y * sw + x;
+          if (colourAt(x, y) === ink && !exterior[at]) internalOutline++;
+          if (!art[at]) continue;
+          let exposed = false;
+          for (let dy = -1; dy <= 1 && !exposed; dy++) {
+            for (let dx = -1; dx <= 1 && !exposed; dx++) {
+              if (!dx && !dy) continue;
+              const nx = x + dx, ny = y + dy;
+              if (nx < 0 || nx >= sw || ny < 0 || ny >= sh) { exposed = true; break; }
+              const next = ny * sw + nx;
+              if (exterior[next] && input[next * 4 + 3] === 0) exposed = true;
+            }
+          }
+          if (exposed) exposedNonOutline++;
+        }
+      }
+      const visited = new Uint8Array(sw * sh);
+      let outerOutlineComponents = 0, shortOutlineFragments = 0;
+      for (let y = 0; y < sh; y++) {
+        for (let x = 0; x < sw; x++) {
+          const start = y * sw + x;
+          if (visited[start] || colourAt(x, y) !== ink) continue;
+          outerOutlineComponents++;
+          let size = 0;
+          const stack = [start];
+          visited[start] = 1;
+          while (stack.length) {
+            const at = stack.pop();
+            const cx = at % sw, cy = Math.floor(at / sw);
+            size++;
+            for (const [nx, ny] of [[cx - 1, cy], [cx + 1, cy], [cx, cy - 1], [cx, cy + 1]]) {
+              if (nx < 0 || nx >= sw || ny < 0 || ny >= sh) continue;
+              const next = ny * sw + nx;
+              if (!visited[next] && colourAt(nx, ny) === ink) {
+                visited[next] = 1;
+                stack.push(next);
+              }
+            }
+          }
+          if (size <= 4) shortOutlineFragments++;
+        }
+      }
+      const palette = new Set();
+      for (let i = 0; i < input.length; i += 4) {
+        if (input[i + 3] > 0) palette.add((input[i] << 16) | (input[i + 1] << 8) | input[i + 2]);
+      }
+      const alpha = new Set();
+      const unexpected = new Set();
+      let drawnPixels = 0;
+      for (let i = 0; i < output.length; i += 4) {
+        const a = output[i + 3];
+        if (a === 0) continue;
+        drawnPixels++;
+        alpha.add(a);
+        const colour = (output[i] << 16) | (output[i + 1] << 8) | output[i + 2];
+        if (!palette.has(colour)) unexpected.add(colour);
+      }
+      return {
+        nativeWidth: frame.naturalWidth,
+        nativeHeight: frame.naturalHeight,
+        frame: frame.src.split('/').pop(),
+        drawnPixels,
+        exposedEarRim,
+        exposedNonOutline,
+        internalOutline,
+        outerOutlineComponents,
+        shortOutlineFragments,
+        stalePixels: composition.stalePixels,
+        missingPixels: composition.missingPixels,
+        changedPixels: composition.changedPixels,
+        mismatchedPixels: composition.mismatchedPixels,
+        expectedDataUrl: composition.expectedDataUrl,
+        alphaValues: [...alpha],
+        unexpectedColors: [...unexpected],
+        dpr: window.devicePixelRatio,
+        dataUrl: canvas.toDataURL('image/png'),
+      };
+    }`)) as {
+      nativeWidth?: number; nativeHeight?: number; drawnPixels?: number; frame?: string;
+      exposedEarRim?: number; shortOutlineFragments?: number;
+      exposedNonOutline?: number; internalOutline?: number; outerOutlineComponents?: number;
+      stalePixels?: number; missingPixels?: number; changedPixels?: number; mismatchedPixels?: number;
+      alphaValues?: number[]; unexpectedColors?: number[]; dpr?: number;
+      dataUrl?: string; expectedDataUrl?: string; error?: string;
+    };
+    const result = await capturePixels();
+
+    // Exercise the other pose from the user's report through the real drag path.
+    // This catches an asset that is clean on disk but stale or incorrectly drawn
+    // only while the carry override is active.
+    await js(`(async () => {
+      const t = window.__petTest;
+      await t.patch({ paused: false, mode: 'rest' });
+      const info = t.info();
+      const grab = { x: info.pet.x, y: info.pet.y - 34 * info.pet.scale };
+      t.beginDrag(grab.x, grab.y);
+      t.updateDrag(grab.x + 24, grab.y - 48);
+    })`);
+    await new Promise((r) => setTimeout(r, 1250));
+    const carryResult = await capturePixels();
+    await js(`(async () => {
+      const t = window.__petTest;
+      t.finishDrag();
+      await t.patch({ paused: true });
+    })`);
+
+    const capture = LOG_FILE ? LOG_FILE.replace(/\.log$/i, '') + '.png' : '';
+    const carryCapture = LOG_FILE ? LOG_FILE.replace(/\.log$/i, '') + '-carry.png' : '';
+    const expectedCapture = LOG_FILE ? LOG_FILE.replace(/\.log$/i, '') + '-expected.png' : '';
+    const carryExpectedCapture = LOG_FILE ? LOG_FILE.replace(/\.log$/i, '') + '-carry-expected.png' : '';
+    if (capture && result.dataUrl) {
+      writeFileSync(capture, Buffer.from(result.dataUrl.slice(result.dataUrl.indexOf(',') + 1), 'base64'));
+    }
+    if (carryCapture && carryResult.dataUrl) {
+      writeFileSync(carryCapture, Buffer.from(carryResult.dataUrl.slice(carryResult.dataUrl.indexOf(',') + 1), 'base64'));
+    }
+    if (expectedCapture && result.expectedDataUrl) {
+      writeFileSync(expectedCapture, Buffer.from(result.expectedDataUrl.slice(result.expectedDataUrl.indexOf(',') + 1), 'base64'));
+    }
+    if (carryExpectedCapture && carryResult.expectedDataUrl) {
+      writeFileSync(carryExpectedCapture, Buffer.from(carryResult.expectedDataUrl.slice(carryResult.expectedDataUrl.indexOf(',') + 1), 'base64'));
+    }
+    const valid = (r: typeof result) => r.nativeWidth === SPRITE_NATIVE.w && r.nativeHeight === SPRITE_NATIVE.h &&
+      (r.drawnPixels ?? 0) > 1000 && r.exposedEarRim === 0 && r.exposedNonOutline === 0 &&
+      r.internalOutline === 0 && r.outerOutlineComponents === 1 && r.shortOutlineFragments === 0 &&
+      r.stalePixels === 0 && r.missingPixels === 0 && r.changedPixels === 0 && r.mismatchedPixels === 0 &&
+      (r.alphaValues ?? []).every((a) => a === 255) &&
+      (r.unexpectedColors ?? []).length === 0;
+    const { dataUrl: _dataUrl, expectedDataUrl: _expectedDataUrl, ...report } = result;
+    const { dataUrl: _carryDataUrl, expectedDataUrl: _carryExpectedDataUrl, ...carryReport } = carryResult;
+    const carryOk = valid(carryResult) && Boolean(carryResult.frame?.startsWith('carry_'));
+    const ok = valid(result) && carryOk;
+    return { pixelCheck: { ...report, capture, carry: { ...carryReport, capture: carryCapture, ok: carryOk }, ok } };
+  }
+
+  if (TEST_PROBE === 'power') {
+    const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const read = async () => await js(`() => {
+      const d = window.__petDiag;
+      return d ? {
+        active: d.active, powerSaving: d.powerSaving, motionHz: d.motionHz,
+        loopCount: d.loopCount, activityResets: d.activityResets,
+      } : null;
+    }`) as {
+      active: boolean; powerSaving: boolean; motionHz: number;
+      loopCount: number; activityResets: number;
+    } | null;
+    await js('window.__petTrace = true;');
+    await wait(120);
+    const initial = await read();
+    await wait(140);
+    const running = await read();
+    const pausedBefore = store.all().paused;
+
+    togglePetVisibility();
+    await wait(70);
+    const hidden = await read();
+    const hiddenLoop = hidden?.loopCount ?? -1;
+    const hiddenCursorStopped = cursorTimer === null;
+    const hiddenInvisible = win?.isVisible() === false;
+    await wait(180);
+    const hiddenLater = await read();
+
+    togglePetVisibility();
+    await wait(120);
+    const restored = await read();
+
+    screenLocked = true;
+    syncActivity();
+    await wait(70);
+    const locked = await read();
+    const lockedLoop = locked?.loopCount ?? -1;
+    await wait(160);
+    const lockedLater = await read();
+    screenLocked = false;
+    syncActivity();
+    await wait(100);
+
+    applyPowerSaving(true);
+    await wait(100);
+    const saver = await read();
+    applyPowerSaving(false);
+    await wait(100);
+    const normal = await read();
+    refreshPowerSaving();
+
+    const result = {
+      initialActive: initial?.active === true,
+      baselineAdvanced: !!running && !!initial && running.loopCount > initial.loopCount,
+      hiddenStopped: hidden?.active === false && hiddenLater?.loopCount === hiddenLoop,
+      hiddenInvisible,
+      hiddenCursorStopped,
+      restored: restored?.active === true && restored.loopCount > hiddenLoop &&
+        restored.activityResets > (initial?.activityResets ?? 0),
+      lockStopped: locked?.active === false && lockedLater?.loopCount === lockedLoop,
+      saver30Hz: saver?.powerSaving === true && saver.motionHz === 30,
+      normal60Hz: normal?.powerSaving === false && normal.motionHz === 60,
+      pausedPreserved: store.all().paused === pausedBefore,
+      onBattery: powerMonitor.isOnBatteryPower(),
+    };
+    const { onBattery, ...checks } = result;
+    return { powerCheck: { ...result, ok: Object.values(checks).every(Boolean) } };
+  }
+
+  if (TEST_PROBE === 'display') {
+    const primary = screen.getPrimaryDisplay();
+    patch({ displayId: primary.id, x: null, y: null });
+    await new Promise((r) => setTimeout(r, 450));
+    const fixedDiag = (await js('window.__petDiag ?? null')) as SmokeDiag | null;
+    const fixedArea = activeArea();
+    const fixedInside = !!fixedDiag &&
+      fixedDiag.pos.x >= fixedArea.x && fixedDiag.pos.x <= fixedArea.x + fixedArea.width &&
+      fixedDiag.pos.y >= fixedArea.y && fixedDiag.pos.y <= fixedArea.y + fixedArea.height;
+
+    patch({ displayId: null });
+    handleDisplayChange();
+    await new Promise((r) => setTimeout(r, 250));
+    const autoArea = activeArea();
+    const autoPreserved = autoArea.x === primary.workArea.x && autoArea.y === primary.workArea.y &&
+      autoArea.width === primary.workArea.width && autoArea.height === primary.workArea.height;
+
+    // Simulate a stale off-screen position after a display is removed. Main must
+    // clamp the native window even before the renderer's next animation tick.
+    moveWindowToAnchor(autoArea.x - 10000, autoArea.y + 10000);
+    const b = win!.getContentBounds();
+    const s = spriteSize(store.all().scale);
+    const actualAnchor = { x: b.x + WINDOW_PAD + s.w / 2, y: b.y + WINDOW_PAD + s.h };
+    const expected = clampAnchorToArea(autoArea.x - 10000, autoArea.y + 10000, autoArea, store.all().scale);
+    const clamped = Math.abs(actualAnchor.x - expected.x) <= 1 && Math.abs(actualAnchor.y - expected.y) <= 1;
+    return {
+      displayCheck: {
+        displays: screen.getAllDisplays().map((d) => ({ id: d.id, scaleFactor: d.scaleFactor, workArea: d.workArea })),
+        fixedInside,
+        autoPreserved,
+        clamped,
+        actualAnchor,
+        expected,
+        ok: fixedInside && autoPreserved && clamped,
+      },
+    };
+  }
+
   return { probe: TEST_PROBE };
 }
 
@@ -1690,8 +2407,11 @@ if (!gotLock) {
 } else {
   app.on('second-instance', () => {
     if (!win) createWindow();
+    manuallyHidden = false;
+    syncActivity();
     win?.showInactive();
     win?.webContents.send('pet:pat');
+    refreshTrayMenu();
   });
 
   app.on('will-quit', () => {
@@ -1714,13 +2434,37 @@ if (!gotLock) {
     registerIpc();
     createWindow();
     createTray();
+    refreshPowerSaving();
 
-    screen.on('display-metrics-changed', () => win?.webContents.send('pet:frame', frameInfo()));
-    screen.on('display-added', () => win?.webContents.send('pet:frame', frameInfo()));
-    screen.on('display-removed', () => win?.webContents.send('pet:frame', frameInfo()));
+    powerMonitor.on('on-battery', refreshPowerSaving);
+    powerMonitor.on('on-ac', refreshPowerSaving);
+    powerMonitor.on('lock-screen', () => {
+      screenLocked = true;
+      syncActivity();
+    });
+    powerMonitor.on('unlock-screen', () => {
+      screenLocked = false;
+      syncActivity();
+    });
+    powerMonitor.on('suspend', () => {
+      systemSuspended = true;
+      syncActivity();
+    });
+    powerMonitor.on('resume', () => {
+      systemSuspended = false;
+      syncActivity();
+      refreshPowerSaving();
+    });
+
+    screen.on('display-metrics-changed', handleDisplayChange);
+    screen.on('display-added', handleDisplayChange);
+    screen.on('display-removed', handleDisplayChange);
   });
 
-  app.on('before-quit', () => store.saveNow());
+  app.on('before-quit', () => {
+    quitting = true;
+    store.saveNow();
+  });
 
   app.on('window-all-closed', () => {
     // the pet has no taskbar entry: closing every window means "quit"

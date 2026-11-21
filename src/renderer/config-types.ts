@@ -12,6 +12,7 @@ export type PetScale = 2 | 3 | 4 | 6;
 export type RoamSpeed = 'slow' | 'normal' | 'fast';
 
 export interface PetConfig {
+  configVersion: 1;
   scale: PetScale;
   mode: PetMode;
   roamSpeed: RoamSpeed;
@@ -23,6 +24,7 @@ export interface PetConfig {
   autostart: boolean;
   alwaysOnTop: boolean;
   displayId: number | null;
+  batterySaver: boolean;
 }
 
 export interface Rect {
@@ -39,6 +41,8 @@ export interface FrameInfo {
   workArea: Rect;
   pad: number;
   version: string;
+  activityActive: boolean;
+  powerSaving: boolean;
   /** true only for automated runs; enables the renderer's introspection hook */
   testMode: boolean;
 }
@@ -46,7 +50,8 @@ export interface FrameInfo {
 export interface Bridge {
   ready(): Promise<FrameInfo>;
   patch(part: Partial<PetConfig>): Promise<PetConfig>;
-  setPos(pos: { x: number; y: number }): void;
+  setPos(pos: { x: number; y: number; seq: number; displayPoint?: { x: number; y: number } }): void;
+  setShape(rects: Rect[]): void;
   requestFrame(): void;
   openMenu(): void;
   quit(): void;
@@ -58,12 +63,14 @@ export interface Bridge {
    * converts pointer client coordinates to screen coordinates with this value, so
    * losing it makes every hit test land in the wrong place.
    */
-  onWindowMoved(cb: (origin: { x: number; y: number }) => void): void;
+  onWindowMoved(cb: (origin: { x: number; y: number; width: number; height: number; seq: number }) => void): void;
   /** global cursor position in screen coordinates; the only cursor source that
    *  works outside the pet's own window (see main: syncCursorPolling) */
   onCursor(cb: (pos: { x: number; y: number }) => void): void;
   onRecenter(cb: (info: FrameInfo) => void): void;
   onPat(cb: () => void): void;
+  onActivity(cb: (active: boolean) => void): void;
+  onPowerSaving(cb: (enabled: boolean) => void): void;
 }
 
 declare global {

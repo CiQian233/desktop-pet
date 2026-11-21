@@ -14,6 +14,8 @@ export interface FrameInfo {
   workArea: Rect;
   pad: number;
   version: string;
+  activityActive: boolean;
+  powerSaving: boolean;
   /** true only for automated runs; enables the renderer's introspection hook */
   testMode: boolean;
 }
@@ -22,7 +24,8 @@ export interface PetBridge {
   ready(): Promise<FrameInfo>;
   patch(part: Partial<PetConfig>): Promise<PetConfig>;
   /** report the pet's feet position in work-area coordinates */
-  setPos(pos: { x: number; y: number }): void;
+  setPos(pos: { x: number; y: number; seq: number; displayPoint?: { x: number; y: number } }): void;
+  setShape(rects: Rect[]): void;
   requestFrame(): void;
   openMenu(): void;
   quit(): void;
@@ -35,17 +38,20 @@ export interface PetBridge {
    * converts pointer client coordinates to screen coordinates with this value, so
    * losing it makes every hit test land in the wrong place.
    */
-  onWindowMoved(cb: (origin: { x: number; y: number }) => void): void;
+  onWindowMoved(cb: (origin: { x: number; y: number; width: number; height: number; seq: number }) => void): void;
   /** global cursor position, in screen coordinates (see main: syncCursorPolling) */
   onCursor(cb: (pos: { x: number; y: number }) => void): void;
   onRecenter(cb: (info: FrameInfo) => void): void;
   onPat(cb: () => void): void;
+  onActivity(cb: (active: boolean) => void): void;
+  onPowerSaving(cb: (enabled: boolean) => void): void;
 }
 
 const bridge: PetBridge = {
   ready: () => ipcRenderer.invoke('app:ready-bundle'),
   patch: (part) => ipcRenderer.invoke('config:patch', part),
   setPos: (pos) => ipcRenderer.send('pet:pos', pos),
+  setShape: (rects) => ipcRenderer.send('pet:setShape', rects),
   requestFrame: () => ipcRenderer.send('pet:requestFrame'),
   openMenu: () => ipcRenderer.send('app:openMenu'),
   quit: () => ipcRenderer.send('app:quit'),
@@ -56,6 +62,8 @@ const bridge: PetBridge = {
   onCursor: (cb) => ipcRenderer.on('pet:cursor', (_e, pos) => cb(pos)),
   onRecenter: (cb) => ipcRenderer.on('pet:recenter', (_e, info) => cb(info)),
   onPat: (cb) => ipcRenderer.on('pet:pat', () => cb()),
+  onActivity: (cb) => ipcRenderer.on('pet:activity', (_e, active) => cb(Boolean(active))),
+  onPowerSaving: (cb) => ipcRenderer.on('pet:powerSaving', (_e, enabled) => cb(Boolean(enabled))),
 };
 
 contextBridge.exposeInMainWorld('pet', bridge);

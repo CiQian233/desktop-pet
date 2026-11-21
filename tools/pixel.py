@@ -180,6 +180,61 @@ class Canvas:
                 if ring[y, x]:
                     self.grid[y][x] = ch
 
+    def unify_outer_outline(self, ch: str = "L") -> None:
+        """Replace every previous outer ring with one continuous dark outline.
+
+        Run after fit/resize so the result is the exact raster used by the app.
+        Eight-neighbour dilation fills the diagonal joins that a four-neighbour
+        ring leaves as isolated dark blocks. The ring stays OUTSIDE the art, so
+        fur colours and facial details do not change. Whiskers are deliberately
+        excluded: rimming their 1px strokes would turn them into black scrawls.
+        """
+        # `L` is only produced by the earlier outline pass. Clear that old ring
+        # before measuring the final silhouette; internal `i/k/K` art is untouched.
+        for y in range(self.h):
+            for x in range(self.w):
+                if self.grid[y][x] == "L":
+                    self.grid[y][x] = EMPTY
+
+        base = np.zeros((self.h, self.w), dtype=bool)
+        for y in range(self.h):
+            for x in range(self.w):
+                if self.grid[y][x] not in (EMPTY, "X"):
+                    base[y, x] = True
+
+        grown = base.copy()
+        for dy in (-1, 0, 1):
+            for dx in (-1, 0, 1):
+                if dy or dx:
+                    grown |= shift(base, dy, dx)
+
+        # Only the OUTER background is eligible. Without this flood fill a
+        # sealed one-pixel gap between dangling paws also receives `L` and
+        # becomes exactly the kind of isolated dark dot this pass must avoid.
+        exterior = np.zeros((self.h, self.w), dtype=bool)
+        stack = []
+        for x in range(self.w):
+            for y in (0, self.h - 1):
+                if not base[y, x]:
+                    stack.append((x, y))
+        for y in range(self.h):
+            for x in (0, self.w - 1):
+                if not base[y, x]:
+                    stack.append((x, y))
+        while stack:
+            x, y = stack.pop()
+            if exterior[y, x]:
+                continue
+            exterior[y, x] = True
+            for nx, ny in ((x - 1, y), (x + 1, y), (x, y - 1), (x, y + 1)):
+                if 0 <= nx < self.w and 0 <= ny < self.h and not base[ny, nx] and not exterior[ny, nx]:
+                    stack.append((nx, ny))
+
+        ring = grown & ~base & exterior
+        for y, x in zip(*np.nonzero(ring)):
+            if self.grid[y][x] == EMPTY:
+                self.grid[y][x] = ch
+
     def flip_h(self) -> "Canvas":
         c = Canvas(self.w, self.h)
         c.grid = [list(reversed(row)) for row in self.grid]

@@ -8,7 +8,8 @@
 
 param(
   [string]$Exe = '',
-  [string]$LogDir = 'dist\smoke'
+  [string]$LogDir = 'dist\smoke',
+  [string]$Only = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -116,6 +117,31 @@ $cases = @(
   # exactly what the user reported.
   @{ name = 'window-sync'; config = @{ mode = 'roam'; roamSpeed = 'fast' }; probe = 'stale'; smokeMs = 14000; expect = {
       param($d) $d.staleCheck.ok -eq $true -and $d.staleCheck.samples -gt 5 } },
+  @{ name = 'gesture'; config = @{}; probe = 'gesture'; smokeMs = 12000; expect = {
+      param($d) $d.gestureCheck.ok -eq $true -and $d.gestureCheck.clickHadNoImmediateCarry -eq $true -and `
+      $d.gestureCheck.pausedTray.Count -eq 0 -and $d.gestureCheck.pauseEndedDrag -eq $true } },
+  @{ name = 'display-check'; config = @{}; probe = 'display'; expect = {
+      param($d) $d.displayCheck.ok -eq $true -and $d.displayCheck.fixedInside -eq $true -and `
+      $d.displayCheck.autoPreserved -eq $true -and $d.displayCheck.clamped -eq $true } },
+  @{ name = 'shape-check'; config = @{}; probe = 'shape'; smokeMs = 8000; expect = {
+      param($d) $d.shapeCheck.ok -eq $true -and $d.shapeCheck.initialBody -eq $true -and `
+      $d.shapeCheck.initialPaddingExcluded -eq $true -and $d.shapeCheck.scaleUpdated -eq $true -and `
+      $d.shapeCheck.errors -eq 0 } },
+  @{ name = 'pixel-check'; config = @{ paused = $true }; probe = 'pixels'; smokeMs = 9000; expect = {
+      param($d) $d.pixelCheck.ok -eq $true -and $d.pixelCheck.nativeWidth -eq $NW -and `
+      $d.pixelCheck.nativeHeight -eq $NH -and $d.pixelCheck.unexpectedColors.Count -eq 0 -and `
+      $d.pixelCheck.carry.ok -eq $true -and $d.pixelCheck.carry.frame -match '^carry_\d\.png$' } },
+  @{ name = 'perf-check'; config = @{}; probe = 'perf'; smokeMs = 15000; waitMs = 30000; expect = {
+      param($d) $d.perfCheck.ok -eq $true -and $d.perfCheck.pausedStable -eq $true -and `
+      $d.perfCheck.maskEfficient -eq $true -and $d.perfCheck.normal60Hz -eq $true -and `
+      $d.perfCheck.saver30Hz -eq $true } },
+  @{ name = 'recovery-check'; config = @{}; probe = 'recovery'; smokeMs = 20000; waitMs = 30000; expect = {
+      param($d) $d.recoveryCheck.ok -eq $true -and $d.recoveryCheck.didReload -eq $true -and `
+      $d.recoveryCheck.ready -eq $true -and $d.recoveryCheck.attempts -eq 1 } },
+  @{ name = 'power-check'; config = @{ mode = 'follow' }; probe = 'power'; smokeMs = 10000; expect = {
+      param($d) $d.powerCheck.ok -eq $true -and $d.powerCheck.hiddenStopped -eq $true -and `
+      $d.powerCheck.restored -eq $true -and $d.powerCheck.lockStopped -eq $true -and `
+      $d.powerCheck.saver30Hz -eq $true -and $d.powerCheck.pausedPreserved -eq $true } },
   # FREE ROAM must use the WHOLE work area, not just the bottom strip: the pet
   # used to walk along the ground line only, so nothing ever moved vertically.
   @{ name = 'roam-vertical'; config = @{ mode = 'roam' }; probe = 'roam'; smokeMs = 40000; waitMs = 70000; expect = {
@@ -135,6 +161,11 @@ $cases = @(
   @{ name = 'speed-fast'; config = @{ mode = 'roam'; roamSpeed = 'fast' }; probe = 'speed'; smokeMs = 12000; expect = {
       param($d) $d.speedCheck.peakSpeed -ge 175 -and $d.speedCheck.peakSpeed -le 250 } }
 )
+
+if ($Only) {
+  $cases = @($cases | Where-Object { $_.name -eq $Only })
+  if ($cases.Count -eq 0) { throw "unknown behaviour case: $Only" }
+}
 
 $failures = 0
 foreach ($case in $cases) {
@@ -176,7 +207,9 @@ foreach ($case in $cases) {
     continue
   }
   $diag = $m.Groups[1].Value | ConvertFrom-Json
-  $ok = & $case.expect $diag
+  $expectation = $case['expect']
+  if ($expectation -isnot [scriptblock]) { throw "missing expectation scriptblock for $($case.name)" }
+  $ok = & $expectation $diag
   $summary = "scale={0} css={1}x{2} mode={3} paused={4} ground={5}" -f `
     $diag.scale, $diag.css.w, $diag.css.h, $diag.mode, $diag.paused, $diag.pos.ground
   if ($diag.drag) {
@@ -237,6 +270,22 @@ foreach ($case in $cases) {
     $summary += " | carry idle={0} held={1}(persistent {2}) released={3}" -f `
       $diag.carryCheck.idle.active, $diag.carryCheck.held.override, `
       $diag.carryCheck.held.persistent, $diag.carryCheck.released.override
+  }
+  if ($diag.gestureCheck) {
+    $summary += " | single={0} double={1} drag={2} pausedTray={3} pauseEndedDrag={4}" -f `
+      ($diag.gestureCheck.single -join ','), ($diag.gestureCheck.double -join ','), `
+      ($diag.gestureCheck.drag -join ','), $diag.gestureCheck.pausedTray.Count, `
+      $diag.gestureCheck.pauseEndedDrag
+  }
+  if ($diag.displayCheck) {
+    $summary += " | displays={0} fixed={1} auto={2} clamped={3}" -f `
+      $diag.displayCheck.displays.Count, $diag.displayCheck.fixedInside, `
+      $diag.displayCheck.autoPreserved, $diag.displayCheck.clamped
+  }
+  if ($diag.pixelCheck) {
+    $summary += " | pixels={0}x{1} dpr={2} alpha={3} extra={4}" -f `
+      $diag.pixelCheck.nativeWidth, $diag.pixelCheck.nativeHeight, $diag.pixelCheck.dpr, `
+      ($diag.pixelCheck.alphaValues -join ','), $diag.pixelCheck.unexpectedColors.Count
   }
   if ($diag.staleCheck) {
     $summary += " | windowSync samples={0} maxDriftX={1} maxDriftY={2} (limit {3})" -f `

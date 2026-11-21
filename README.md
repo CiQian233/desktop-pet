@@ -1,203 +1,108 @@
-# 桌宠猫咪 · CalicoPet
+# CalicoPet · 三花猫桌宠
 
-以我家三花猫的照片为形象基底做的**像素风桌面宠物**。Windows 桌面上一只透明背景的像素猫，
-不挡桌面操作（非猫身区域鼠标点击直接穿透），支持暂停/继续、倍率切换、三种行为模式，
-后续功能以**插件**形式扩展。
+一只安静的像素风三花猫，住在 Windows 桌面上。Electron + TypeScript 实现，支持待机、自由漫游、鼠标跟随、摸头、双击和拖拽抛掷。
 
-> 计划与架构见 `PLAN.md`。
+当前版本：**0.3.2**。本版重点修复高 DPI 下快速移动和拖拽时的残影、旧帧重绘与抽搐，将所有动画帧统一为单层连续深黑外描边，并完善多显示器、低打扰、原生透明穿透、配置恢复和发布验证。
 
----
+## 下载与运行
 
-## 快速开始
+发布目录已提供两种 Windows x64 产物：
 
-```powershell
-npm install          # 首次：装依赖（会自动下载 Electron 运行时）
-npm start            # 编译 + 启动桌宠
-```
+| 形式 | 文件 | 适合场景 |
+| --- | --- | --- |
+| 便携版 | `dist/portable/CalicoPet-portable-0.3.2.exe` | 免安装，双击即用 |
+| 完整安装包 | `dist/installer/CalicoPet-setup-0.3.2.exe` | 当前用户安装、开始菜单和桌面快捷方式 |
 
-打包出 exe：
+安装包默认不需要管理员权限。两种形式共用同一套功能；便携版不会在 exe 旁写配置，配置仍保存在当前用户目录中。
 
-```powershell
-powershell -File scripts/pack.ps1                      # 便携版 + 安装包（推荐）
-powershell -File scripts/pack.ps1 -Target portable     # 只打便携版
-powershell -File scripts/pack.ps1 -Target installer    # 只打安装包
+GitHub 下载：[CalicoPet v0.3.2 Release](https://github.com/CiQian233/desktop-pet/releases/tag/v0.3.2)。校验文件已生成到 `dist/release/SHA256SUMS-v0.3.2.txt`，并随 Release 上传。
 
-npm run pack:all                                       # 等价写法（内部就是调上面的脚本）
-```
+当前发布物为**未签名**（NotSigned），Windows 可能显示 SmartScreen“未知发布者”；可使用 SHA-256 核对下载完整性。
 
-产物：
+## 基本操作
 
-```
-dist/portable/CalicoPet-portable-0.1.0.exe     便携版，双击即用，退出后自动清理临时目录
-dist/installer/CalicoPet-setup-0.1.0.exe       安装包，可自选安装目录，建桌面/开始菜单快捷方式
-```
-
-> **必须用 `pack.ps1`**，不要直接调 `electron-builder`。
-> electron-builder 解压 `winCodeSign` 辅助包时会碰到两个 Windows 建不出来的 macOS 符号链接，
-> 7za 退出码 2 导致构建失败（尽管真正需要的 `rcedit` 已经解压好了）。
-> `pack.ps1` 会临时替换 7za 剥离这两个条目，并在结束时还原。
-
-> **签名**：产出的 exe 默认是 **NotSigned**，其他用户下载后会看到 SmartScreen
-> 「未知发布者」警告。接入方式见 [`docs/CODE_SIGNING.md`](docs/CODE_SIGNING.md)——
-> 配好环境变量（证书文件或 Azure Trusted Signing）后 `pack.ps1` 会自动签名，
-> 没有证书时照常产出未签名产物，不会报错。
-
-验证构建（无需人眼看屏幕，自动启动→自检→退出）：
-
-```powershell
-powershell -File scripts/smoke.ps1                          # 验证开发构建
-powershell -File scripts/smoke.ps1 -Exe dist\portable\xxx.exe  # 验证打包产物
-```
-
----
-
-## 用法
-
-| 操作 | 效果 |
+| 操作 | 行为 |
 | --- | --- |
-| 左键点猫 | 摸头（`pat` 反应） |
-| 双击猫 | 生气（`angry`） |
-| 按住拖动 | 拎起来（`carry`），松手会落下并落地压扁 |
-| 右键（任意处） | 打开菜单 |
-| 托盘图标左键 | 摸头 |
-| 托盘图标右键 | 菜单 |
+| 单击猫身体 | 摸头 |
+| 快速双击 | 生气 |
+| 长按约 180ms 或移动超过阈值后拖动 | 拎起并移动；松手后落下 |
+| 右键猫身体 | 打开功能菜单 |
+| 托盘左键 | 显示隐藏的桌宠；已显示时摸头 |
+| 托盘右键 | 打开完整菜单 |
 
-菜单里可以：**暂停/继续动作**、切**行为模式**、切**显示倍率**、开机自启、窗口置顶、回到右下角、退出。
+菜单可切换：
 
-| 行为模式 | 说明 |
-| --- | --- |
-| 原地待机 | 待在原地，呼吸、眨眼、摇尾，久了会打盹 |
-| 自由走动 | 沿屏幕来回散步，碰到边缘转身 |
-| 跟着鼠标 | 跟着光标走，鼠标静止一会儿后停下休息 |
+- 原地待机 / 自由漫游 / 跟随鼠标。
+- 2× / 3× / 4× / 6× 显示倍率，默认 3×。
+- 慢 / 中 / 快三档漫游速度。
+- 暂停 / 继续、隐藏 / 显示桌宠。
+- 自动选择显示器或固定到某台显示器。
+- 总在最前、电池供电时省电、开机自动启动。
+- 摸头、打开说明和退出。
 
-| 显示倍率 | 实际大小（原生 76×68） |
-| --- | --- |
-| 2× | 152 × 136 |
-| **3×（默认）** | **228 × 204** |
-| 4× | 304 × 272 |
-| 6× | 456 × 408 |
+暂停会冻结动作和移动，但仍可打开菜单。隐藏、锁屏和系统休眠使用独立运行时状态，不会改写保存的暂停设置。
 
-设置会自动保存到 `%APPDATA%\CalicoPet\pet-config.json`，重启后保留位置、倍率、模式与暂停状态。
+## 显示与穿透
 
----
+桌宠使用**跟随猫咪的小型透明窗口**，不是整屏覆盖层。主进程使用内容区坐标同步窗口，渲染器忽略过期位置回传，避免高 DPI 和快速移动时重画旧位置。
 
-## 目录结构
+运行时直接加载 76×68 原生帧，并把目标矩形取整到物理像素。全部动画帧在最终栅格上使用**单层、连续、统一深黑色外描边**：八邻域外扩补齐斜角，且只描与画布外部连通的轮廓，不在内部封闭空隙添加黑点；内部毛色、五官和浅色胡须保持不变。每帧在恒等设备像素变换下清除整个 backing store，避免高 DPI 只清除部分画布而叠加旧帧；主画布与蒙版画布统一 CPU 光栅化路径。
 
-```
-desktop-pet/
-├─ src/
-│  ├─ main/          主进程：窗口、托盘、菜单、点击穿透、配置持久化
-│  │  ├─ main.ts         透明全屏覆盖窗口 + 托盘 + 菜单 + 光标轮询
-│  │  ├─ config.ts       配置读写（原子写入 + 字段校验）
-│  │  └─ preload.ts      contextBridge 安全桥
-│  ├─ renderer/      渲染进程：像素动画 + 物理 + 交互
-│  │  ├─ renderer.ts     主循环、输入、绘制、暂停遮罩
-│  │  ├─ config-types.ts 与主进程共用的配置契约（preload.ts 是权威侧）
-│  │  └─ core/
-│  │     ├─ atlas.ts       帧加载
-│  │     ├─ animator.ts    动画时钟（基础动画 + 一次性反应）
-│  │     └─ controller.ts  位置/速度/重力/行为模式
-├─ art/sprites/chibi-hd/  像素帧（生成物，勿手改）
-├─ tools/                 形象生成器（Python）
-├─ preview/               形象预览页
-├─ docs/CODE_SIGNING.md   代码签名接入说明
-├─ scripts/               构建辅助（打包、资源同步、ESM 修正、冒烟测试）
-│  └─ pack.ps1            打包入口（内含 7za 符号链接规避）
-├─ .github/workflows/     CI：打 tag 自动构建 + 签名 + 发布 Release
-├─ electron-builder.config.cjs  在 package.json 的 build 之上叠加签名
-└─ dist/                  构建产物（不入库）
-   ├─ portable/           便携版 exe
-   ├─ installer/          安装包
-   └─ smoke/              冒烟测试日志
-```
+Windows 上通过原生窗口形状让透明区域向后方窗口穿透；猫身体仍可点击。轮廓更新保留少量安全边距，避免呼吸、挤压和 DPI 舍入裁掉像素。
 
----
+“自动选择显示器”会在保存位置、当前窗口、鼠标所在屏和主屏之间选择有效工作区；固定显示器模式则限制在所选屏幕。漫游保持在单个工作区，跟随和拖拽可按指针位置切换工作区。
 
-## 改形象（像素猫）
+## 低打扰与恢复
 
-形象由 `tools/chibi_hd.py` 里的 `Params` 参数驱动，**改数字就能出新动作**：
+- 隐藏、锁屏和系统休眠期间停止运动循环，恢复时重置计时。
+- 隐藏时停止跟随模式的全局鼠标轮询。
+- 电池供电且开启省电时，运动更新目标从 60Hz 降为 30Hz。
+- 渲染进程异常退出时，一分钟内最多自动恢复两次。
 
-| 参数 | 作用 |
-| --- | --- |
-| `breath` | 呼吸起伏 |
-| `blink` | 0 睁眼 / 1 半闭 / 2 闭眼 |
-| `look` | 眼球左右偏移 |
-| `gait` | 步态：-1 / 0 / +1，驱动两条前腿交替抬起 |
-| `squash` | 压扁（坐下、落地） |
-| `tail_swing` | 尾巴正弦摆动 |
-| `mood` | `neutral` / `sleepy` / `angry` |
-| `dangle` | 被拎起悬空 |
+配置保存在 `%APPDATA%\CalicoPet\pet-config.json`，并维护 `pet-config.json.bak` 已知良好备份。主配置损坏时会从备份恢复，损坏文件保留为带时间戳的 `.corrupt` 文件。测试使用独立配置目录，不读写真实用户配置。
 
-改完重新导出（会同时更新预览页与程序用的数据）：
+## 从源码运行
+
+要求：Windows、Node.js 20+、npm。只有重新导出像素素材时才额外需要 Python、NumPy 和 Pillow，普通构建与运行不需要 Python。
 
 ```powershell
-python tools/export_chibi_hd.py
-npm run build          # 把新帧同步进 dist
+npm ci
+npm run dev
 ```
 
-加新动画：在 `tools/export_chibi_hd.py` 的 `ANIMS` 里加一条（名称 / 中文标签 / fps / 是否循环 / 参数列表），
-**不需要改任何渲染代码**。渲染器只认 `pet.json` 里的动画名。
-
-调试形象：
+常用命令：
 
 ```powershell
-python tools/iterate_chibi.py 6    # 导出全部姿态 + 去描边的几何调试图
-python tools/make_icons.py         # 重新生成程序图标与托盘图标
+npm run build          # TypeScript 构建与资源同步
+npm run check          # 源码文本与敏感路径检查
+npm run test:unit      # 配置迁移、原子保存和损坏恢复单元测试
+npm run smoke          # 启动、自检、退出
+npm run verify         # 完整行为矩阵
+npm run pack:all       # 便携版 + NSIS 安装包
 ```
 
----
+`verify` 会启动真实 Electron 窗口。也可用 `scripts/verify-behaviour.ps1 -Only <用例名>` 运行单项；`scripts/verify-native-shape.ps1` 使用 Windows `WindowFromPoint` 验证原生命中。
 
-## 插件（规划中，见 PLAN.md §3）
+## 项目结构
 
-每个功能一个文件夹放在 `plugins/`：
-
-```
-plugins/pomodoro/
-├─ manifest.json     id / 名称 / 版本 / 入口 / 权限 / 配置项
-├─ index.js          入口（沙箱内运行）
-└─ assets/           插件自带像素素材
-```
-
-插件宿主在 M3 里程碑实现；届时丢进目录即生效，**不需要重新打包 exe**。
-
----
-
-## 分析录像类工具
-
-`tools/` 下基于屏幕录像做动作分析的工具（`analyse_video.py`、`filmstrip.py`、
-`frames_video.py`、`track_motion.py`、`track_pet.py`、`zoom_video.py`）不内置录像路径，
-用环境变量或命令行参数传入：
-
-```powershell
-$env:PET_VIDEO = "D:\record\pet.mp4"
-python tools/track_pet.py
-# 或
-python tools/track_pet.py D:\record\pet.mp4
+```text
+src/main/                 主进程、托盘、配置、preload 安全桥
+src/renderer/             渲染、动画、行为、输入与像素遮罩
+art/sprites/chibi-hd/     7 组、33 帧原生动画及来源图
+assets/                   应用页面和托盘图标
+scripts/                  构建、测试、打包与发布辅助脚本
+.github/workflows/        Windows CI 与 Release 流程
+docs/                     项目日志、版本更新和签名说明
 ```
 
-输出统一写到 `dist/smoke/`（仓库相对路径，非硬编码盘符）。
+应用使用 `contextIsolation`、关闭 `nodeIntegration`，渲染进程通过最小 IPC 桥访问能力。用户原始照片不参与打包。
 
----
+## 验证与边界
 
-## 常见问题
+v0.3.2 开发版已通过配置核心 4 项单元测试和完整 31 项行为矩阵，详见 `docs/CHANGELOG_v0.3.2.md` 与 `docs/PROJECT_LOG.md`。
 
-**打包失败 / 下载 Electron 很慢**
-项目内 `.npmrc` 已配置国内镜像与项目内缓存目录（`.npm-cache`、`.electron-cache`、`.builder-cache`），
-若用户级缓存被安全软件锁死，这些设置能绕开。必要时手动指定镜像：
+本机自动环境只有一块物理显示器，真实双屏热插拔、混合 DPI，以及真实拔电、锁屏和休眠仍需硬件人工验收；相关自动测试覆盖坐标策略和受控状态切换。自动更新尚未实现。
 
-```powershell
-$env:ELECTRON_MIRROR = 'https://registry.npmmirror.com/-/binary/electron/'
-```
+## 许可
 
-**程序启动了但看不到猫**
-猫默认在**主屏右下角**。托盘图标右键 → 「回到右下角」或「移到主显示器」。
-若处于暂停状态，猫身上会盖一层暗色并显示暂停角标。
-
-**点不动猫**
-只有猫身像素接收鼠标事件，其余区域是穿透的 —— 这是刻意的设计。请点猫的身体。
-
-**想看运行日志**
-```powershell
-$env:PET_LOG = "$PWD\pet.log"; npm start
-```
-`PET_DEVTOOLS=1` 还会打开开发者工具。
+MIT，见 `LICENSE`。

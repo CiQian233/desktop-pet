@@ -6,7 +6,10 @@ import type { FrameInfo, PetConfig } from './config-types';
 const META_URL = 'sprites/pet.json';
 
 const canvas = document.getElementById('pet') as HTMLCanvasElement;
-const ctx = canvas.getContext('2d', { alpha: true })!;
+// Keep the visible canvas on the same deterministic CPU rasterisation path as
+// maskCanvas. GPU nearest-neighbour sampling at fractional DPR can choose a
+// different source texel on isolated ear/outline pixels.
+const ctx = canvas.getContext('2d', { alpha: true, willReadFrequently: true })!;
 
 let cfg: PetConfig;
 let atlas: SpriteAtlas;
@@ -30,6 +33,13 @@ let dragOffset = { x: 0, y: 0 };
 let dragMoved = 0;
 /** the pointer that owns the current drag, so capture can be taken/released */
 let pointerId: number | null = null;
+/** a real pointer press is a click until it moves far enough or becomes a hold */
+let pendingPress: { id: number; x: number; y: number; timer: number } | null = null;
+let tapTimer: number | null = null;
+let lastTapAt = 0;
+let lastTapPos = { x: 0, y: 0 };
+const LONG_PRESS_MS = 180;
+const DOUBLE_TAP_MS = 280;
 /** last time the pointer produced a drag event; a stale value means a lost drag */
 let lastDragAt = 0;
 /** latest pointer position in SCREEN coordinates (windowRect + client) */
@@ -59,6 +69,8 @@ function noteAnimTransition(src?: string): void {
 /** how many window-move notifications arrived, and the last one (diagnostics) */
 let windowMovedCount = 0;
 let lastWindowMoved = { x: 0, y: 0 };
+/** monotonically increasing pet-position report, used to reject stale native echoes */
+let moveSeq = 0;
 
 /** pixel-accurate sprite coverage, rebuilt when the frame or facing changes */
 const MASK_CELL = 4;
@@ -66,8 +78,13 @@ let spriteMask: Uint8Array | null = null;
 let maskW = 0;
 let maskH = 0;
 let maskKey = '';
+let shapeKey = '';
+let shapeRectCount = 0;
+let shapeRevision = 0;
 /** scratch canvas for mask rasterisation, reused across rebuilds */
 const maskCanvas = document.createElement('canvas');
+/** test-only clean reference captured at the same instant as the real draw */
+const referenceCanvas = document.createElement('canvas');
 
 /** input counters, published in diagnostics so a drag regression stays visible */
 const inputStats = { down: 0, up: 0, move: 0, hit: 0, dragStarts: 0, cancel: 0, mask: false, maskCell: '' };
@@ -96,6 +113,11 @@ interface PetDiagnostics {
   css: { w: number; h: number };
   scale: number;
   paused: boolean;
+  active: boolean;
+  powerSaving: boolean;
+  motionHz: number;
+  loopCount: number;
+  activityResets: number;
   mode: string;
   /** instantaneous travel speed, px/s: how fast the cat is actually moving */
   speed: number;
@@ -120,6 +142,8 @@ interface PetDiagnostics {
     targetY: number;
   }>;
   diagFrames: number;
+  shape: { rectangles: number; revision: number };
+  perf: { draws: number; maskBuilds: number; positionReports: number };
   follow: {
     cursor: { x: number; y: number };
     cursorAgeMs: number;
@@ -140,10 +164,19 @@ declare global {
       beginDrag(x: number, y: number): boolean;
       updateDrag(x: number, y: number): void;
       finishDrag(): void;
+      trayPat(): void;
       hitTest(x: number, y: number): boolean;
       info(): unknown;
       /** the artwork currently on screen, for pixel-level probes (e.g. facing) */
       currentFrame(): HTMLImageElement;
+      /** compare the real backing store with a freshly rendered copy of this exact frame */
+      pixelAudit(): {
+        stalePixels: number;
+        missingPixels: number;
+        changedPixels: number;
+        mismatchedPixels: number;
+        expectedDataUrl: string;
+      };
       /** config bridge, so a probe can freeze the animation while measuring */
       patch(part: Record<string, unknown>): Promise<unknown>;
       /** this work area's home corner (bottom-right), in work-area coordinates */
@@ -164,6 +197,8 @@ async function boot(): Promise<void> {
 
   const frame = await window.pet.ready();
   cfg = frame.config;
+  activityActive = frame.activityActive;
+  powerSaving = frame.powerSaving;
   testMode = frame.testMode;
   applyFrame(frame);
 
@@ -300,9 +335,29 @@ function updateBaseAnim(): void {
 // ipc
 // ---------------------------------------------------------------------------
 
+// Runtime activity is not persisted: hiding, lock-screen and sleep must never
+// overwrite the user's explicit pause preference.
+let activityActive = true;
+let powerSaving = false;
+let loopCount = 0;
+let activityResets = 0;
+
+function receiveTrayPat(): void {
+  if (cfg.paused || !activityActive) return;
+  lastInteraction = performance.now();
+  pet.pat();
+  wakeLoop();
+}
+
 function wireIpc(): void {
   window.pet.onConfig((next) => {
     const prev = cfg;
+    if (next.paused && !prev.paused) {
+      // A paused pet must not queue a pat or remain captured by a dead pointer.
+      cancelPendingPress();
+      cancelTap();
+      if (dragging) finishDrag(false);
+    }
     cfg = next;
     pet.paused = next.paused;
     pet.mode = next.mode;
@@ -332,14 +387,18 @@ function wireIpc(): void {
    * -- measured up to 904px, which made the cat impossible to grab.
    */
   window.pet.onWindowMoved((origin) => {
+    // Main can finish an older native move after the renderer has already
+    // produced a newer pet position. Applying that old echo makes the sprite
+    // jump inside its window and is visible as a double image / twitch.
+    if (origin.seq > 0 && origin.seq < moveSeq) return;
     windowMovedCount++;
-    lastWindowMoved = { ...origin };
-    // This is the ACTUAL origin, not an optimistic target. Drawing must use it:
-    // painting at a target the native window has not reached yet clips the cat
-    // at the window edge for one frame, which reads as a twitch. Pointer input
-    // no longer depends on this cache (it uses screenX/screenY), so waiting for
-    // the real echo cannot break dragging.
-    windowRect = { ...windowRect, x: origin.x, y: origin.y };
+    lastWindowMoved = { x: origin.x, y: origin.y };
+    windowRect = {
+      x: origin.x,
+      y: origin.y,
+      width: origin.width,
+      height: origin.height,
+    };
   });
 
   /**
@@ -374,11 +433,32 @@ function wireIpc(): void {
     wakeLoop(true);
   });
 
-  window.pet.onPat(() => {
-    lastInteraction = performance.now();
-    pet.pat();
-    wakeLoop();
+  window.pet.onPowerSaving((enabled) => {
+    powerSaving = enabled;
+    publishDiagnostics();
+    wakeLoop(true);
   });
+
+  window.pet.onActivity((active) => {
+    if (activityActive === active) return;
+    activityActive = active;
+    cancelPendingPress();
+    cancelTap();
+    if (dragging) finishDrag(false);
+    if (!active) {
+      if (frameTimer !== null) window.clearTimeout(frameTimer);
+      frameTimer = null;
+      frameDueAt = 0;
+      publishDiagnostics();
+      return;
+    }
+    activityResets++;
+    last = performance.now();
+    publishDiagnostics();
+    wakeLoop(true);
+  });
+
+  window.pet.onPat(receiveTrayPat);
 }
 
 /** pet position (world) at the last successful report */
@@ -416,9 +496,20 @@ function reportPosition(force = false): void {
   }
   lastReportAt = performance.now();
   lastReported = { x: visual.x, y: visual.y };
-  // Do not advance windowRect optimistically. The native echo is what draw()
-  // can trust; painting ahead of the real window clips the sprite.
-  window.pet.setPos({ x: Math.round(visual.x), y: Math.round(visual.y) });
+  const x = Math.round(visual.x);
+  const y = Math.round(visual.y);
+  moveSeq += 1;
+  // Draw in the same target content rectangle that this report asks main to
+  // use. The sprite therefore stays at a fixed local anchor while Windows moves
+  // the whole window. A late echo for an older seq is ignored in wireIpc().
+  windowRect = { ...windowRect, x: x - pad - pet.spriteW / 2, y: y - pad - pet.spriteH };
+  window.pet.setPos({
+    x,
+    y,
+    seq: moveSeq,
+    displayPoint: dragging ? { ...pointer } : undefined,
+  });
+  perfStats.positionReports++;
 }
 
 let persistTimer: number | null = null;
@@ -452,10 +543,10 @@ function persistPosition(immediate = false): void {
 
 /** returns true when a drag actually started */
 function beginDrag(x: number, y: number): boolean {
+  if (cfg.paused || !activityActive) return false;
   if (!hitTest(x, y)) return false;
   inputStats.hit++;
   lastInteraction = performance.now();
-  if (cfg.paused) return false;      // frozen: no petting, no dragging
   dragging = true;
   dragMoved = 0;
   // Grab offset against the sprite's VISUAL anchor (bottom-centre). The internal
@@ -487,11 +578,12 @@ function updateDrag(x: number, y: number): void {
   lastDragAt = performance.now();
   const nx = x - dragOffset.x;
   const ny = y - dragOffset.y;
+  pointer = { x, y };
   dragMoved += Math.hypot(nx - pet.visualX, ny - pet.visualY);
   pet.dragTo(nx, ny);
 }
 
-function finishDrag(): void {
+function finishDrag(allowPat = true): void {
   if (!dragging) return;
   const wasClick = dragMoved < 7 * (window.devicePixelRatio || 1);
   dragging = false;
@@ -508,7 +600,7 @@ function finishDrag(): void {
   // the drop position is the pet's visual position; persisting the internal
   // ground-line value used to restore the cat to the wrong place
   persistPosition();
-  if (wasClick) {
+  if (wasClick && allowPat) {
     lastInteraction = performance.now();
     pet.pat();
   }
@@ -551,8 +643,10 @@ function installTestHook(): void {
     beginDrag,
     updateDrag,
     finishDrag,
+    trayPat: receiveTrayPat,
     hitTest,
     currentFrame: () => anim.currentFrame(),
+    pixelAudit,
     patch: (part: Record<string, unknown>) => window.pet.patch(part),
     home: () => defaultHome(),
     animState: () => ({
@@ -575,6 +669,9 @@ function installTestHook(): void {
       windowRect,
       local: localAnchor(),
       stats: { ...inputStats },
+      activity: { active: activityActive, powerSaving, motionHz: powerSaving ? 30 : 60, loopCount, activityResets },
+      perf: { ...perfStats },
+      shape: { rectangles: shapeRectCount, revision: shapeRevision },
     }),
     /** debug hook: step the follow logic directly and report what changed */
     stepChase: (px: number, py: number, dt = 0.016) => {
@@ -586,6 +683,68 @@ function installTestHook(): void {
       return { before, after: { x: pet.x, y: pet.drawY, hover: pet.hover } };
     },
   } as unknown as NonNullable<Window['__petTest']>;
+}
+
+function cancelTap(): void {
+  if (tapTimer !== null) window.clearTimeout(tapTimer);
+  tapTimer = null;
+  lastTapAt = 0;
+}
+
+function cancelPendingPress(): void {
+  if (!pendingPress) return;
+  window.clearTimeout(pendingPress.timer);
+  if (pointerId === pendingPress.id && canvas.releasePointerCapture) {
+    try { canvas.releasePointerCapture(pointerId); } catch { /* already released */ }
+  }
+  pendingPress = null;
+  pointerId = null;
+}
+
+/** promote a pending real press to the existing, fully tested drag path */
+function startPendingDrag(current?: { x: number; y: number }): void {
+  const pending = pendingPress;
+  if (!pending || cfg.paused || !activityActive) return;
+  window.clearTimeout(pending.timer);
+  pendingPress = null;
+  pointerId = pending.id;
+  cancelTap();
+  if (beginDrag(pending.x, pending.y)) {
+    if (current) updateDrag(current.x, current.y);
+    wakeLoop();
+  } else {
+    if (canvas.releasePointerCapture) {
+      try { canvas.releasePointerCapture(pending.id); } catch { /* already released */ }
+    }
+    pointerId = null;
+  }
+}
+
+function queueTap(p: { x: number; y: number }): void {
+  if (cfg.paused || !activityActive || !hitTest(p.x, p.y)) return;
+  const now = performance.now();
+  const isDouble = tapTimer !== null && now - lastTapAt <= DOUBLE_TAP_MS &&
+    Math.hypot(p.x - lastTapPos.x, p.y - lastTapPos.y) <= 10 * (window.devicePixelRatio || 1);
+  if (isDouble) {
+    cancelTap();
+    lastInteraction = now;
+    pet.anger();
+    wakeLoop();
+    return;
+  }
+  cancelTap();
+  lastTapAt = now;
+  lastTapPos = { ...p };
+  // Delay the single tap just long enough to distinguish a double click. This
+  // prevents two pat animations from flashing before the angry animation.
+  tapTimer = window.setTimeout(() => {
+    tapTimer = null;
+    lastTapAt = 0;
+    if (cfg.paused || !activityActive) return;
+    lastInteraction = performance.now();
+    pet.pat();
+    wakeLoop();
+  }, DOUBLE_TAP_MS);
 }
 
 function wireInput(): void {
@@ -601,24 +760,34 @@ function wireInput(): void {
   window.addEventListener('pointerdown', (e) => {
     if (testMode && e.isTrusted) return;
     inputStats.down++;
-    if (e.button !== 0) return;
+    if (e.button !== 0 || dragging || pendingPress) return;
     const p = screenPos(e);
     pointer = p;
     lastPointerMove = performance.now();
+    if (cfg.paused || !activityActive || !hitTest(p.x, p.y)) return;
     pointerId = e.pointerId;
-    if (beginDrag(p.x, p.y)) {
-      wakeLoop();
-      e.preventDefault();
-    }
+    pendingPress = {
+      id: e.pointerId,
+      x: p.x,
+      y: p.y,
+      timer: window.setTimeout(() => startPendingDrag(), LONG_PRESS_MS),
+    };
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* capture is a bonus */ }
+    e.preventDefault();
   });
 
   window.addEventListener('pointermove', (e) => {
     if (testMode && e.isTrusted) return;
+    if (pointerId !== null && e.pointerId !== pointerId) return;
     inputStats.move++;
     const p = screenPos(e);
     const changed = p.x !== pointer.x || p.y !== pointer.y;
     pointer = p;
     lastPointerMove = performance.now();
+    if (pendingPress && e.pointerId === pendingPress.id && changed) {
+      const distance = Math.hypot(p.x - pendingPress.x, p.y - pendingPress.y);
+      if (distance >= 6 * (window.devicePixelRatio || 1)) startPendingDrag(p);
+    }
     // Windows synthesises pointermove events when the window moves underneath
     // a stationary cursor. They carry a new clientX/clientY but the SAME
     // screenX/screenY. Ignoring them prevents both drag feedback and endless
@@ -628,9 +797,17 @@ function wireInput(): void {
 
   window.addEventListener('pointerup', (e) => {
     if (testMode && e.isTrusted) return;
+    if (pointerId !== null && e.pointerId !== pointerId) return;
     inputStats.up++;
+    if (pendingPress) {
+      const p = screenPos(e);
+      cancelPendingPress();
+      queueTap(p);
+      e.preventDefault();
+      return;
+    }
     if (!dragging) return;
-    finishDrag();
+    finishDrag(false);
     e.preventDefault();
   });
 
@@ -640,26 +817,20 @@ function wireInput(): void {
   // every click. These three listeners end the drag in each loss case.
   window.addEventListener('pointercancel', (e) => {
     if (testMode && e.isTrusted) return;
+    if (pointerId !== null && e.pointerId !== pointerId) return;
     inputStats.cancel++;
-    if (dragging) finishDrag();
+    cancelPendingPress();
+    if (dragging) finishDrag(false);
   });
   window.addEventListener('blur', () => {
     if (testMode) return;
-    if (dragging) finishDrag();
+    cancelPendingPress();
+    if (dragging) finishDrag(false);
   });
   document.addEventListener('mouseleave', () => {
     if (testMode) return;
     // the button is no longer down: a drag that produced no events has died
-    if (dragging && (performance.now() - lastDragAt > 400)) finishDrag();
-  });
-
-  window.addEventListener('dblclick', (e) => {
-    if (testMode && e.isTrusted) return;
-    if (cfg.paused) return;
-    const p = screenPos(e);
-    if (!hitTest(p.x, p.y)) return;
-    lastInteraction = performance.now();
-    pet.anger();
+    if (dragging && (performance.now() - lastDragAt > 400)) finishDrag(false);
   });
 
   window.addEventListener('contextmenu', (e) => {
@@ -687,6 +858,7 @@ let nextDiagAt = 250;
 let diagFrames = 0;
 /** dirty flag for draw(): everything draw() consumes, keyed; '' forces a draw */
 let lastDrawKey = '';
+const perfStats = { draws: 0, maskBuilds: 0, positionReports: 0 };
 
 // ---------------------------------------------------------------------------
 // frame scheduler
@@ -718,7 +890,7 @@ function scheduleFrame(delayMs: number): void {
 
 /** Bring the next update forward; force=true also runs one frame while paused. */
 function wakeLoop(force = false): void {
-  if (!cfg) return;
+  if (!cfg || !activityActive) return;
   if (cfg.paused && !force) return;
   if (frameTimer !== null) {
     if (frameDueAt - performance.now() < 6) return; // a frame is already imminent
@@ -732,7 +904,7 @@ function wakeLoop(force = false): void {
 }
 
 function scheduleNextFrame(probeAttached: boolean): void {
-  if (!cfg || cfg.paused) return;
+  if (!cfg || cfg.paused || !activityActive) return;
   const moving =
     dragging ||
     pet.isMoving ||
@@ -740,7 +912,7 @@ function scheduleNextFrame(probeAttached: boolean): void {
     !pet.onGround ||
     pet.squashFactor > 0.001;
   if (moving || probeAttached) {
-    scheduleFrame(MOTION_FRAME_MS);
+    scheduleFrame(powerSaving ? 1000 / 30 : MOTION_FRAME_MS);
     return;
   }
   // A blink or pat is an animation-only change: run it at its authored frame
@@ -750,6 +922,8 @@ function scheduleNextFrame(probeAttached: boolean): void {
 }
 
 function loop(now: number): void {
+  if (!activityActive) return;
+  loopCount++;
   // Physics is clamped so a stall cannot teleport the cat; animation uses the
   // real elapsed time so lowering the idle tick rate does not slow it down.
   const rawDt = Math.min(1, Math.max(0, (now - last) / 1000));
@@ -759,7 +933,7 @@ function loop(now: number): void {
   // A drag whose pointer events have stopped arriving (button released outside
   // the pet window, pointer lost, window moved out from under the cursor) must
   // end here: otherwise `dragging` stays true and the pet stops taking clicks.
-  if (dragging && now - lastDragAt > 1500) finishDrag();
+  if (dragging && now - lastDragAt > 1500) finishDrag(false);
 
   if (!cfg.paused) updateBaseAnim();
 
@@ -830,7 +1004,7 @@ function loop(now: number): void {
     `|${breathing ? 1 : 0}|${Math.round(pet.squashFactor * 1000)}|${window.devicePixelRatio || 1}`;
   if (drawKey !== lastDrawKey) {
     lastDrawKey = drawKey;
-    draw(frame);
+    draw();
   }
 
   // publish continuously while a probe is attached, so a frozen snapshot means
@@ -884,7 +1058,9 @@ function buildMask(img: HTMLImageElement, flip: boolean): void {
   maskH = Math.ceil(h / MASK_CELL);
   const data = octx.getImageData(0, 0, w, h).data;
   const next = new Uint8Array(maskW * maskH);
-  const need = Math.max(3, Math.floor((MASK_CELL * MASK_CELL) / 3));
+  // A cell is part of the native shape if it contains ANY visible pixel. This
+  // prevents the OS region from shaving off sparse whiskers and edge pixels.
+  const need = 1;
   for (let cy = 0; cy < maskH; cy++) {
     for (let cx = 0; cx < maskW; cx++) {
       let hits = 0;
@@ -901,6 +1077,7 @@ function buildMask(img: HTMLImageElement, flip: boolean): void {
   spriteMask = next;
   inputStats.mask = true;
   inputStats.maskCell = `${maskW}x${maskH}`;
+  perfStats.maskBuilds++;
 }
 
 /**
@@ -923,31 +1100,112 @@ function renderMetrics(): { drawW: number; drawH: number; left: number; top: num
   };
 }
 
-function draw(frame: HTMLImageElement): void {
+function deviceDrawRect(metrics = renderMetrics()): { left: number; top: number; width: number; height: number } {
   const dpr = window.devicePixelRatio || 1;
+  const local = localAnchor();
+  return {
+    left: Math.round((local.x - metrics.drawW / 2) * dpr),
+    top: Math.round((local.y - metrics.drawH) * dpr),
+    width: Math.max(1, Math.round(metrics.drawW * dpr)),
+    height: Math.max(1, Math.round(metrics.drawH * dpr)),
+  };
+}
+
+function syncWindowShape(metrics: { drawW: number; drawH: number; left: number; top: number }): void {
+  if (!spriteMask) return;
+  // Quantise deformation to 4 CSS px. The 2px safety margin covers the interval
+  // so squash/breath cannot shave visible pixels between native region updates.
+  const key = `${maskKey}|${Math.round(metrics.drawW / 4)}|${Math.round(metrics.drawH / 4)}`;
+  if (key === shapeKey) return;
+  shapeKey = key;
+
+  const cellW = (metrics.drawW / pet.spriteW) * MASK_CELL;
+  const cellH = (metrics.drawH / pet.spriteH) * MASK_CELL;
+  const left = metrics.left - windowRect.x;
+  const top = metrics.top - windowRect.y;
+  const margin = 2;
+  const rects: Array<{ x: number; y: number; width: number; height: number }> = [];
+
+  // Merge horizontal runs: hundreds of small regions instead of thousands of
+  // individual mask cells. Windows performs the actual click-through hit test.
+  for (let cy = 0; cy < maskH; cy++) {
+    let run = -1;
+    for (let cx = 0; cx <= maskW; cx++) {
+      const filled = cx < maskW && spriteMask[cy * maskW + cx] === 1;
+      if (filled && run < 0) run = cx;
+      if (!filled && run >= 0) {
+        const x = Math.floor(left + run * cellW) - margin;
+        const y = Math.floor(top + cy * cellH) - margin;
+        const right = Math.ceil(left + cx * cellW) + margin;
+        const bottom = Math.ceil(top + (cy + 1) * cellH) + margin;
+        rects.push({ x, y, width: right - x, height: bottom - y });
+        run = -1;
+      }
+    }
+  }
+  shapeRectCount = rects.length;
+  shapeRevision++;
+  window.pet.setShape(rects);
+}
+
+function draw(): void {
+  perfStats.draws++;
   ctx.setTransform(1, 0, 0, 1, 0, 0);
-  // clear the whole backing store, in CSS pixels: canvas.width / dpr. Clearing
-  // by the raw device size only happened to be correct because dpr is 1 here,
-  // and on a scaled display it would wipe the wrong area.
-  ctx.clearRect(0, 0, canvas.width / dpr, canvas.height / dpr);
+  // The transform is identity and the canvas backing store is in DEVICE pixels.
+  // Clear its full raw dimensions: dividing by DPR here left the right and bottom
+  // uncleared at 125%/150%, so later animation frames accumulated on old pixels.
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const metrics = renderMetrics();
 
-  ctx.save();
-  ctx.scale(dpr, dpr);
   ctx.imageSmoothingEnabled = false;
 
-  // Bottom-centre of the sprite in WINDOW-LOCAL coordinates. Use the live
-  // anchor rather than pad+w/2: while the window follows the pet it can lag by
-  // the dead-zone amount, and drawing at a fixed spot would then put the pixels
-  // a few px away from the screen position hitTest uses.
-  const local = localAnchor();
-  ctx.translate(local.x, local.y);
-  // facing: mirror around the sprite's own centre. The artwork faces LEFT, so
-  // facing RIGHT (facing > 0) is the mirrored case.
-  if (pet.facing > 0) ctx.scale(-1, 1);
-  ctx.drawImage(frame, -metrics.drawW / 2, -metrics.drawH, metrics.drawW, metrics.drawH);
-  ctx.restore();
+  // Rasterise into an integer DEVICE-pixel rectangle. The same calculation is
+  // exposed to the pixel audit so a fresh reference frame uses identical geometry.
+  const rect = deviceDrawRect(metrics);
+  // buildMask() already mirrored this exact native frame at integer CSS scale;
+  // reuse its bitmap rather than scaling and flipping the source a second time.
+  ctx.drawImage(maskCanvas, rect.left, rect.top, rect.width, rect.height);
+  if (testMode) {
+    // Build the expected image NOW, with the same bitmap and rectangle as the
+    // real draw. Recomputing it later can observe a newer sub-pixel anchor or
+    // squash value and report a false one-pixel shift.
+    referenceCanvas.width = canvas.width;
+    referenceCanvas.height = canvas.height;
+    const rctx = referenceCanvas.getContext('2d', { willReadFrequently: true })!;
+    rctx.imageSmoothingEnabled = false;
+    rctx.drawImage(maskCanvas, rect.left, rect.top, rect.width, rect.height);
+  }
+  syncWindowShape(metrics);
+}
+
+/**
+ * Test-only proof that the visible canvas is exactly one current frame. A fresh
+ * transparent canvas cannot inherit old pixels, so any difference from the real
+ * backing store identifies residual, missing or altered pixels independently of
+ * the source-PNG outline checks.
+ */
+function pixelAudit(): {
+  stalePixels: number;
+  missingPixels: number;
+  changedPixels: number;
+  mismatchedPixels: number;
+  expectedDataUrl: string;
+} {
+  const ectx = referenceCanvas.getContext('2d', { willReadFrequently: true })!;
+  const actualData = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const expectedData = ectx.getImageData(0, 0, referenceCanvas.width, referenceCanvas.height).data;
+  let stalePixels = 0, missingPixels = 0, changedPixels = 0, mismatchedPixels = 0;
+  for (let i = 0; i < actualData.length; i += 4) {
+    const different = actualData[i] !== expectedData[i] || actualData[i + 1] !== expectedData[i + 1] ||
+      actualData[i + 2] !== expectedData[i + 2] || actualData[i + 3] !== expectedData[i + 3];
+    if (!different) continue;
+    mismatchedPixels++;
+    if (actualData[i + 3] > 0 && expectedData[i + 3] === 0) stalePixels++;
+    else if (actualData[i + 3] === 0 && expectedData[i + 3] > 0) missingPixels++;
+    else changedPixels++;
+  }
+  return { stalePixels, missingPixels, changedPixels, mismatchedPixels, expectedDataUrl: referenceCanvas.toDataURL('image/png') };
 }
 
 function publishDiagnostics(): void {
@@ -960,6 +1218,11 @@ function publishDiagnostics(): void {
     css: { w: pet.spriteW, h: pet.spriteH },
     scale: pet.scale,
     paused: cfg.paused,
+    active: activityActive,
+    powerSaving,
+    motionHz: powerSaving ? 30 : 60,
+    loopCount,
+    activityResets,
     mode: pet.mode,
     speed: Math.round(petSpeed),
     /** which sequence is actually on screen, and whether it is held or transient */
@@ -989,6 +1252,8 @@ function publishDiagnostics(): void {
     wander: pet.wanderDebug,
     trace: trace.slice(-40),
     diagFrames,
+    shape: { rectangles: shapeRectCount, revision: shapeRevision },
+    perf: { ...perfStats },
   };
 }
 

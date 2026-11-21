@@ -50,11 +50,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # ---------------------------------------------------------------- gating
       # Fail fast, BEFORE the multi-minute packaging step. The text guard's
       # negative self-test runs first (a guard that cannot catch damage is
-      # worthless), then the full build (resource sync + typecheck), then a
-      # smoke boot of the app with its 9 hard assertions.
+      # worthless), then the build, config unit tests, smoke boot and the full
+      # behaviour matrix. Packaging is never allowed to hide a failed gate.
       - name: Text guard (with negative self-test)
         run: |
           npm run check:text
@@ -63,9 +62,16 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Config core unit tests
+        run: npm run test:unit
+
       - name: Smoke test
         timeout-minutes: 5
         run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/smoke.ps1 -Seconds 6
+
+      - name: Development behaviour matrix
+        timeout-minutes: 10
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-behaviour.ps1
 
       # ---------------------------------------------------------------- signing
       # Azure Trusted Signing needs an Entra ID login. Only runs when the secret
@@ -80,6 +86,15 @@ jobs:
 
       - name: Build and package
         run: npm run pack:all
+
+      - name: Portable behaviour matrix
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          $exe = Get-ChildItem dist/portable/CalicoPet-portable-*.exe | Select-Object -First 1
+          if (-not $exe) { throw 'Portable artifact not found' }
+          & scripts/verify-behaviour.ps1 -Exe $exe.FullName
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       # Reporting only -- Get-AuthenticodeSignature does not autoload in every host,
       # so a failure here must not fail a build whose artifacts are already produced.
@@ -101,11 +116,13 @@ jobs:
       - name: Write checksums
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force dist/release | Out-Null
+          $sums = "dist/release/SHA256SUMS-${{ github.ref_name }}.txt"
           Get-ChildItem dist/portable, dist/installer -File -Filter *.exe |
             ForEach-Object {
               "{0}  {1}" -f (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower(), $_.Name
-            } | Set-Content dist/SHA256SUMS.txt
-          Get-Content dist/SHA256SUMS.txt
+            } | Set-Content $sums
+          Get-Content $sums
 
       - name: Publish release
         # Tag pushes publish; a manual run only proves the build works, so it must
@@ -117,8 +134,8 @@ jobs:
             dist/portable/CalicoPet-portable-*.exe
             dist/installer/CalicoPet-setup-*.exe
             dist/installer/*.blockmap
-            dist/SHA256SUMS.txt
+            dist/release/SHA256SUMS-*.txt
           # the curated changelog for this tag becomes the release body;
           # generate_release_notes appends the auto-generated section after it
-          body_path: changelog/${{ github.ref_name }}.md
+          body_path: docs/CHANGELOG_${{ github.ref_name }}.md
           generate_release_notes: true

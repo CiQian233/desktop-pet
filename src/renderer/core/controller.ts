@@ -203,6 +203,10 @@ export class PetController {
 
   setArea(area: WorkArea): void {
     this.area = area;
+    // Targets belong to the old display/work area; carrying one across a DPI or
+    // topology change would pin the pet against an edge chasing an unreachable x.
+    this.roamTarget = null;
+    this.chasing = false;
     this.clampToArea();
     this.onGround = this.y >= this.groundY - 0.6;
   }

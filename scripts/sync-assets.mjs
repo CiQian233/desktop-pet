@@ -32,12 +32,9 @@ const step = async (label, fn) => {
   }
 };
 
-/** frame files the renderer actually needs */
+/** the renderer needs the native 1x frame, renamed to the metadata's stable URL */
 function wantedFrame(name) {
-  if (!name.endsWith('.png')) return false;
-  if (name.includes('@1x') || name.startsWith('_dev_')) return false;
-  if (['sheet.png', 'walk_strip.png', 'pat_strip.png'].includes(name)) return false;
-  return true;
+  return name.endsWith('@1x.png') && !name.startsWith('_dev_');
 }
 
 await step('renderer sprites/frames', async () => {
@@ -51,7 +48,15 @@ await step('renderer sprites/frames', async () => {
   const frames = names.filter(wantedFrame);
   if (frames.length === 0) throw new Error(`no frames found in ${SPRITE_SRC}`);
   for (const name of frames) {
-    await cp(join(SPRITE_SRC, name), join(dst, name));
+    const src = join(SPRITE_SRC, name);
+    const bytes = await readFile(src);
+    // PNG IHDR: 8-byte signature + length/type, then big-endian width/height.
+    // Guard the actual runtime input, not only the filename: feeding the old 6x
+    // art into a 3x canvas and then a fractional-DPI canvas caused edge speckle.
+    if (bytes.length < 24 || bytes.readUInt32BE(16) !== meta.native[0] || bytes.readUInt32BE(20) !== meta.native[1]) {
+      throw new Error(`${name} is not native ${meta.native[0]}x${meta.native[1]}`);
+    }
+    await cp(src, join(dst, name.replace('@1x', '')));
   }
   console.log(`       ${frames.length} frames`);
 });
